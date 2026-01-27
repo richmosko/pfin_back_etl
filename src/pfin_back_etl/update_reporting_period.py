@@ -1,5 +1,5 @@
 """
-Project:       pfin-etlback
+Project:       pfin-back-etl
 Author:        Rich Mosko
 
 Description:

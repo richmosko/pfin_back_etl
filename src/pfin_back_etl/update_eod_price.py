@@ -3,7 +3,7 @@ Project:       pfin-back-etl
 Author:        Rich Mosko
 
 Description:
-    Update the pfin.cash_flow_statement table
+    Update the pfin.eod_price table
 
     This code was cloned and modified from fmp-stable-api as a
     starting point. 
@@ -168,7 +168,6 @@ print(f'\n====    ====    ====    ====    ====    ====    ====')
 print(f"Setting up sqlalchemy engine...")
 DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?sslmode=require"
 engine = sqla.create_engine(DATABASE_URL, poolclass=sqla.pool.NullPool)
-#engine = sqla.create_engine(DATABASE_URL, poolclass=sqla.pool.NullPool, echo=True)
 
 # 2. Create the Automap Base, linking to your engine's metadata
 print(f"Initializing sqlalchemy MetaData object...")
@@ -194,23 +193,23 @@ print(f"EQUITY_PROFILE SCHEMA: {Base.by_module.pfin.equity_profile.__table__.sch
 
 print(f'\n====    ====    ====    ====    ====    ====    ====')
 with sqla.orm.Session(engine) as session:
-    # A. Fetch what's already in pfin.reporting_period for later comparison
+    # 1. Fetch what's already in pfin.eod_price for later comparison
     print(f"Figure out what's already in pfin.reporting_period...")
-    tab = Base.by_module.pfin.reporting_period.__table__
+    tab_sbase = Base.by_module.pfin.eod_price
+    tab = tab_sbase.__table__
     stmt = sqla.select(tab)
     ldict = fetch_sbase_ldict(session, stmt)
-    df_rp = ldict_to_df(ldict, tab)
-    df_rp_map = df_rp[['id', 'asset_id', 'filing_date']]
-    print(df_rp_map)
+    df_sbase = ldict_to_df(ldict, tab)
+    print(df_sbase)
 
-    # B. Generate list of symbols to work on
-    print(f"Generating a set of cash_flow_statements to fetch from FMP...")
-    t_asset = Base.by_module.pfin.asset
-    t_asset_cat = Base.by_module.pfin.asset_cat
-    stmt = sqla.select(t_asset.symbol, t_asset.id
-              ).join(t_asset_cat
-              ).where(t_asset_cat.cat == 'Equity'
-              ).where(t_asset.has_financials==True)
+    # 2. Generate list of symbols to work on
+    print(f"Generating a set of eod_price to fetch from FMP...")
+    tab_asset = Base.by_module.pfin.asset
+    tab_asset_cat = Base.by_module.pfin.asset_cat
+    stmt = ( sqla.select(tab_asset.symbol, tab_asset.id)
+                 .join(tab_asset_cat)
+                 .where(tab_asset_cat.cat == 'Equity')
+                 .where(tab_asset.has_financials==True) )
     ldict = fetch_sbase_ldict(session, stmt)
     id_list = [d['id'] for d in ldict]
     sym_list = [d['symbol'] for d in ldict]
@@ -221,38 +220,26 @@ with sqla.orm.Session(engine) as session:
         asset_map[sym] = xid
     print(asset_map)
 
-    # 1. Fetch what's already in pfin.cash_flow_statement for later comparison
-    print(f"Figure out what's already in pfin.cash_flow_statement...")
-    tab_sbase = Base.by_module.pfin.cash_flow_statement
-    tab = tab_sbase.__table__
-    stmt = sqla.select(tab)
-    ldict = fetch_sbase_ldict(session, stmt)
-    df_sbase = ldict_to_df(ldict, tab)
-    print(df_sbase)
-
-    # 2. Fetch the stock cash_flow_statement data from FMP
-    print(f"Fetching cash_flow_statement data from Financial Modeling Prep...")
-    df_fmp = fetch_fmp_list_df(fmp_client.cash_flow_statement, 'symbol',
-                               symbol=sym_list, limit=20, period='quarter')
+    # 3. Fetch the eod_price(historical-eod/full) data from FMP
+    print(f"Fetching EOD historical data from Financial Modeling Prep...")
+    date_5y_ago = dt.datetime.now() - dt.timedelta(days=5*365)
+    date_5y_ago = date_5y_ago.strftime('%Y-%m-%d')
+    df_fmp = fetch_fmp_list_df(fmp_client.historical_full, 'symbol',
+                               symbol=sym_list, start_date=date_5y_ago)
     df_fmp.rename(columns={'symbol': 'asset_id'}, inplace=True)
     df_fmp.rename(columns={'date': 'end_date'}, inplace=True)
     df_fmp['asset_id'] = df_fmp['asset_id'].map(asset_map)
-    df_fmp['filing_date'] = pd.to_datetime(df_fmp['filing_date'])
-    df_fmp['filing_date'] = df_fmp['filing_date'].dt.date
-    uq_cols = ['asset_id', 'filing_date']
-    df_fmp = pd.merge(df_fmp, df_rp_map, on=uq_cols, how='inner')
-    df_fmp = df_fmp.drop(columns=uq_cols)
-    df_fmp.rename(columns={'id': 'reporting_period_id'}, inplace=True)
-    print(f"Set of entries to insert/update in pfin.reporting_period:")
-    print(df_fmp['reporting_period_id'].to_list())
+    df_fmp['end_date'] = pd.to_datetime(df_fmp['end_date'])
+    df_fmp['end_date'] = df_fmp['end_date'].dt.date
+    print(f"Set of entries to insert/update in pfin.eod_price:")
+    print(df_fmp)
 
-    # 3. Find the common columns to populate in the cash_flow_statement DB table
-    print(f"Merging columns (inner join) to limit what gets sent to DB...")
-    t_sbase = Base.by_module.pfin.cash_flow_statement
+    # 4. Find the common columns to populate in the eod_price DB table
+    print(f"Merging columns to (inner join) to limit what gets sent to DB...")
+    t_sbase = Base.by_module.pfin.eod_price
     sb_cols = t_sbase.__table__.columns.keys()
     fmp_cols = set(list(df_fmp.columns))
     common_cols = [item for item in sb_cols if item in fmp_cols]
-    print(common_cols)
     df_new = pd.DataFrame(columns=common_cols) # initialze empty DF
     df_old = pd.DataFrame(columns=common_cols) # initialze empty DF
     for col in common_cols:
@@ -260,18 +247,18 @@ with sqla.orm.Session(engine) as session:
         df_old[col] = df_sbase[col]
     print(common_cols)
 
-    # 4. Isolate new cash_flow_statement(s) to insert
+    # 5. Isolate new eod_price(s) to insert
     print(f"Determining entries to insert...")
-    key_list = 'reporting_period_id'
+    key_list = ['asset_id', 'end_date']
     df_insert = df_merge_common_cols(key_list, df_old, df_new)
     print(df_insert)
 
-    # 5. Isolate existing cash_flow_statement(s) to update
+    # 6. Isolate existing eod_price(s) to update
     print(f"Determining entries to update...")
     df_update = df_old
-    # [richmosko]: primary key already present in FK reporting_period_id
-    #df_update['id'] = df_sbase['id'] # [richmosko]: ensure primary key present
+    df_update['id'] = df_sbase['id'] # [richmosko]: ensure primary key present
     print(df_update)
+
 
 with sqla.orm.Session(engine) as session:
     # 7. Insert new entries
@@ -282,15 +269,13 @@ with sqla.orm.Session(engine) as session:
         session.execute(stmt, ldict_insert)
         session.commit()
 
-
 with sqla.orm.Session(engine) as session:
-    result = session.execute(sqla.text("DISCARD TEMPORARY"))
-    session.commit()
-
     # 8. Update existing entries
     print(f"Updating existing entries...")
     ldict_update = df_update.to_dict('records')
     if ldict_update:
         staging_update(session, metadata, tab_sbase,
-                       key_list, ldict_update)
+                       'id', ldict_update)
+        session.commit()
+
 
