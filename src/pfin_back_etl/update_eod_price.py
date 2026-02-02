@@ -194,7 +194,7 @@ print(f"EQUITY_PROFILE SCHEMA: {Base.by_module.pfin.equity_profile.__table__.sch
 print(f'\n====    ====    ====    ====    ====    ====    ====')
 with sqla.orm.Session(engine) as session:
     # 1. Fetch what's already in pfin.eod_price for later comparison
-    print(f"Figure out what's already in pfin.reporting_period...")
+    print(f"Figure out what's already in pfin.eod_price...")
     tab_sbase = Base.by_module.pfin.eod_price
     tab = tab_sbase.__table__
     stmt = sqla.select(tab)
