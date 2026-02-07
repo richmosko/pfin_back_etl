@@ -5,7 +5,7 @@ This project consists of a set of backend scripts to extract data from external
 APIs, and transform them to data formats that align with the overall PFin project
 table structures in SupaBase.
 
-## Some Requirements
+## Some External Requirements
 For this to work, this project will need a few external things set up:
 
 ### UV installation
