@@ -15,257 +15,155 @@ from datetime import date
 import re
 import requests
 import json
-import psycopg2
 import sqlalchemy as sqla
-from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy.ext.automap import automap_base
-import pandas as pd
+import polars as pl
 import fmpstab
 
 
-# This should get moved to the common library/Package
 def col_to_snake(col_list):
     col_dict = {}
     for col in col_list:
         col_dict[col] = re.sub(r"([a-z])([A-Z])", r"\1_\2", col).lower()
     return col_dict
 
-def fetch_sbase_ldict(session, stmt):
-    result = session.execute(stmt)
-    ldict = []
-    for row in result:
-        row_as_dict = row._asdict()
-        ldict.append(row_as_dict)
-    return ldict
-
 def ldict_to_df(ldict, tab):
     cols = tab.columns.keys()
-    df = pd.DataFrame(columns=cols) if not ldict else pd.DataFrame(ldict)
+    df = pl.DataFrame(schema=cols) if not ldict else pl.DataFrame(ldict)
     return df
 
-def fetch_fmp_df(fmp_func, **kwargs):
-    fmp_api_name = fmp_func.__name__
-    print(f"    FMP ({fmp_api_name}): Fetching {kwargs} ...", end='')
-    rsp = fmp_func(**kwargs)
-    df = pd.DataFrame(rsp.json())
-    df.rename(columns=col_to_snake(df.columns.to_list()), inplace=True)
-    print(f" Got {len(df)} rows")
-    return df
+def clean_empty_str_df(df):
+    df_clean = df.with_columns(
+        pl.col(pl.String).replace("", None)
+    )
+    return df_clean
 
-def fetch_fmp_list_df(fmp_func, key, **kwargs):
-    fmp_api_name = fmp_func.__name__
-    key_list = kwargs.pop(key)
-    if not isinstance(key_list, list):
-        key_list = [key_list]
-
-    df_list = []
-    for item in key_list:
-        kwargs[key] = item
-        df_list.append(fetch_fmp_df(fmp_func, **kwargs))
-    df_fmp = pd.concat(df_list, axis=0)
-    return df_fmp
-
-def module_name_for_table(tablename, declarativetable, reflecttable):
-    if reflecttable.schema:
-        # e.g., returns "mymodules.schema_a"
-        #print(reflecttable.schema)
-        return reflecttable.schema
-    else:
-        # Default module name if no schema is present
-        return "default"
-
-def resolve_referred_schema(table, to_metadata, constraint, referred_schema):
+def apply_schema_df(df_src, df_tgt):
     """
-    Dynamically determines the target schema for a foreign key reference.
+    Cast datatypes from one polars dataframe(df_from) to another DF(df_to)
+
+    args:
+        df_src:            polars dataframe source to extract schema(datatypes)
+        df_tgt:            polars dataframe target to apply schema(datatypes)
+
+    returns:
+        df_cast:           df_tgt with casted datatypes (polars DF)
     """
-    if referred_schema == 'source_schema':
-        return 'target_schema' # Map 'source_schema' to 'target_schema'
-    return referred_schema
+    schema_src = df_src.schema
+    schema_tgt = df_tgt.schema
+    for key in schema_tgt.keys():
+        if key in schema_src:
+            schema_tgt[key] = schema_src[key]
+    df_cast = df_tgt.cast(schema_tgt)
+    return df_cast
 
-def staging_update(session, metadata, tab_sbase, key_list, ldict_update):
-    if not isinstance(key_list, list):
-        key_list = [key_list]
+def load_env_variables(env_prefix):
+    """
+    Load the environmental variables from a '.env' file. The variables read
+    should countain the specific setup constraints and passwords for use in
+    the database access and API calls.
 
-    result = session.execute(sqla.text("DISCARD TEMPORARY"))
-    session.commit()
-
-    tab_stag = tab_sbase.__table__.to_metadata(metadata,
-                                               name='table_staging',
-                                               schema=None,
-                                               referred_schema_fn=resolve_referred_schema)
-    tab_stag._prefixes.append("TEMP")
-    tab_stag.constraints = set()
-    tab_stag.foreign_keys = set()
-
-    tg_name = tab_sbase.__table__.name
-    st_name = tab_stag.name
-    stmt = sqla.text(f"""CREATE TEMP TABLE {st_name} AS
-                         SELECT * FROM pfin.{tg_name};""")
-    result = session.execute(stmt)
-
-    stmt = sqla.insert(tab_stag)
-    session.execute(stmt, ldict_update)
-
-    # SQL statement to update from staging table
-    t_tab_name = tab_sbase.__table__.name
-    s_tab_name = tab_stag.name
-
-    ud_stmt = f"""UPDATE pfin.{tg_name} as TG"""
-    ud_stmt += f"""\nSET"""
-    set_list = []
-    for column in tab_sbase.__table__.columns:
-        if column.name not in key_list:
-            set_list.append(f"""\n{column.name} = ST.{column.name}""")
-    ud_stmt += ", ".join(set_list)
-    ud_stmt += f"""\nFROM {st_name} as ST"""
-    ud_stmt += f"""\nWHERE """
-    cond_list = []
-    for key_col in key_list:
-        cond_list.append(f"""TG.{key_col}=ST.{key_col}""")
-    ud_stmt += " AND ".join(cond_list)
-    ud_stmt += ';'
-    stmt = sqla.text(ud_stmt)
-    #print(stmt)
-    result = session.execute(stmt)
-    session.commit()
-
-def load_env_variables():
+    returns: params (dictionary of the desired environmental variables)
+    """
     params = {}
 
     # Load environment variables from local .env file
     dotenv.load_dotenv()
 
-    # Check for API Key in FMP_API_KEY env variable and stores it if not found
+    # Check for API Key in FMP_API_KEY env variable
     key_name = 'FMP_API_KEY'
     key_value = os.getenv(key_name)
-    params['FMP_KEY_VALUE'] = key_value
+    params['FMP_API_KEY'] = key_value
+    if key_value is not None:
+        print(f"{key_name} value found...")
+    else:
+        raise ValueError(f"Environment variable {key_name} does not exist in .env file.")
+
+    # Check for BLS API Key in env variable
+    key_name = 'BLS_API_KEY'
+    key_value = os.getenv(key_name)
+    params['BLS_API_KEY'] = key_value
     if key_value is not None:
         print(f"{key_name} value found...")
     else:
         raise ValueError(f"Environment variable {key_name} does not exist in .env file.")
 
     # Fetch other env variables
-    params['PFIN_DB_USER'] = os.getenv('PFIN_DB_USER')
-    params['PFIN_DB_PASSWORD'] = os.getenv('PFIN_DB_PASSWORD')
-    params['PFIN_DB_HOST'] = os.getenv('PFIN_DB_HOST')
-    params['PFIN_DB_PORT'] = os.getenv('PFIN_DB_PORT')
-    params['PFIN_DB_NAME'] = os.getenv('PFIN_DB_NAME')
+    params['DB_USER'] = os.getenv(env_prefix+'DB_USER')
+    params['DB_HOST'] = os.getenv(env_prefix+'DB_HOST')
+    params['DB_PORT'] = os.getenv(env_prefix+'DB_PORT')
+    params['DB_NAME'] = os.getenv(env_prefix+'DB_NAME')
+    params['DB_PASSWORD'] = os.getenv(env_prefix+'DB_PASSWORD')
     return params
 
+def sqla_modulename_for_table(tablename, declarativetable, reflecttable):
+    """
+    This function needs to be defined with the above input arguments
+    for sqlalchemy to automap the table names including the schemas
+    when referencing through the 'by_module' class:
+        ie: base.by_module.pfin.reporting_period
 
-def sbase_setup(DATABASE_URL):
-    # SBASE:: Try to establish a connection to the postgresql database
-    # 1. Construct the SQLAlchemy connection string and setup the engine
-    print(f"Setting up sqlalchemy engine...")
-    engine = sqla.create_engine(DATABASE_URL, poolclass=sqla.pool.NullPool)
-    #engine = sqla.create_engine(DATABASE_URL, poolclass=sqla.pool.NullPool, echo=True)
+    used in the _sbase_setup() member function of PfinSBaseConn
 
-    # 2. Create the Automap Base, linking to your engine's metadata
-    print(f"Initializing sqlalchemy MetaData object...")
-    metadata = sqla.MetaData()
-    Base = sqla.ext.automap.automap_base(metadata=metadata)
+    returns: schema (string of schema name to use)
+    """
+    if reflecttable.schema:
+        return reflecttable.schema
+    else:
+        # Default module name if no schema is present
+        return "public"
 
-    # 3. Reflect tables from each schema into the *same* metadata object
-    print(f"Reflect database tables to sqlalchemy MetaData object...")
-    metadata.reflect(bind=engine, schema='auth')
-    metadata.reflect(bind=engine, schema='pfin')
+def sqla_resolve_referred_schema(table, to_metadata, constraint, referred_schema):
+    """
+    Dynamically determines the target schema for a foreign key reference
+    in sqlalchemy. Used when creating a temp table for a staging update.
+    """
+    if referred_schema == 'source_schema':
+        return 'target_schema' # Map 'source_schema' to 'target_schema'
+    return referred_schema
 
-    # 4. Prepare the Automap base
-    print(f"Automapping DB tables to sqlalchemy base object...")
-    Base.prepare(autoload_with=engine, modulename_for_table=module_name_for_table)
-    return (engine, metadata, Base)
+def fetch_cpi_df (api_key, startyear, endyear, series_id_lst):
+    """
+    Fetch Consumer Price Index data from the Brureau of Labor Statistics.
 
+    args:
+        startyear:         starting year to fetch in 'yyyy' format
+        endyear:           ending year to fetch in 'yyyy' format
+        series_id_lst:     list of series IDs to fetch. id: ['CUUR0000SA0']
 
-def fetch_table_df(session, table):
-    # Fetch what's already in {table} for later comparison
-    tab = table.__table__
-    stmt = sqla.select(tab)
-    ldict = fetch_sbase_ldict(session, stmt)
-    df_tab = ldict_to_df(ldict, tab)
-    return df_tab
-
-def fetch_asset_map(session, Base):
-    # B. Generate list of symbols to work on
-    print(f"Generating a set of income_statements to fetch from FMP...")
-    tab_asset = Base.by_module.pfin.asset
-    tab_asset_cat = Base.by_module.pfin.asset_cat
-    stmt = sqla.select(tab_asset.symbol, tab_asset.id
-              ).join(tab_asset_cat
-              ).where(tab_asset_cat.cat == 'Equity'
-              ).where(tab_asset.has_financials==True)
-    ldict = fetch_sbase_ldict(session, stmt)
-    id_list = [d['id'] for d in ldict]
-    sym_list = [d['symbol'] for d in ldict]
-    asset_map = {}
-    for item in ldict:
-        sym = item['symbol']
-        xid = item['id']
-        asset_map[sym] = xid
-    return asset_map
-
-def df_calc_common_cols(tab_sbase, df_sbase, df_fmp):
-    # Find the common columns to populate in the DB table
-    sb_cols = tab_sbase.__table__.columns.keys()
-    fmp_cols = set(list(df_fmp.columns))
-    common_cols = [item for item in sb_cols if item in fmp_cols]
-    df_new = pd.DataFrame(columns=common_cols) # initialze empty DF
-    df_old = pd.DataFrame(columns=common_cols) # initialze empty DF
-    for col in common_cols:
-        df_new[col] = df_fmp[col]
-        df_old[col] = df_sbase[col]
-    return (common_cols, df_old, df_new)
-
-def df_isolate_new_rows(on_key, df_old, df_new):
-    df_mrg = pd.merge(df_new, df_old,
-                      on=on_key, how='outer',
-                      suffixes=('', '_y'), indicator=True)
-    df_mrg = df_mrg[df_mrg['_merge'] == 'left_only']
-    df_mrg = df_mrg[df_new.columns]
-    return df_mrg
-
-def df_insert_table(session, tab_sbase, df_insert):
-    print(f"Inserting new entries...")
-    ldict_insert = df_insert.to_dict('records')
-    if ldict_insert:
-        stmt = sqla.insert(tab_sbase)
-        session.execute(stmt, ldict_insert)
-        session.commit()
-
-def df_update_table(session, metadata, tab_sbase, key_list, df_update):
-    print(f"Updating existing entries...")
-    ldict_update = df_update.to_dict('records')
-    if ldict_update:
-        staging_update(session, metadata, tab_sbase,
-                       key_list, ldict_update)
-        session.commit()
-
-def fetch_cpi_df (startyear, endyear, series_id_lst):
+    returns:
+        df_cpi:            polars dataframe of CPI index data
+    """
     headers = {'Content-type': 'application/json'}
-    data = json.dumps({"seriesid": series_id_lst,
+    data = json.dumps({"registrationkey": api_key,
+                       "seriesid": series_id_lst,
                        "startyear":startyear,
                        "endyear":endyear})
     p = requests.post('https://api.bls.gov/publicAPI/v2/timeseries/data/',
                       data=data, headers=headers)
     json_data = json.loads(p.text)
 
+    print(f"  JSON STATUS: {json_data['status']}")
     if json_data['status'] != 'REQUEST_SUCCEEDED':
         raise Exception('BLS CPI fetch request unsuccessful')
 
     df_list = []
     for series in json_data['Results']['series']:
-        df = pd.DataFrame(series['data'])
-        df.rename(columns=col_to_snake(df.columns.to_list()), inplace=True)
-        df['series_id'] = series['seriesID']
-        df.rename(columns={'period': 'month'}, inplace=True)
-        df['month'] = pd.to_numeric(df['month'].str.lstrip('M'))
-        df['year'] = pd.to_numeric(df['year'])
-        df['value'] = pd.to_numeric(df['value'], errors='coerce')
-        df = df.dropna(subset=['value'])
-        df.rename(columns={'value': 'series_value'}, inplace=True)
-        df.drop('footnotes', axis=1, inplace=True)
-        df['ref_date'] = df['year'].astype(str) + '-' + df['month'].astype(str) + '-14'
+        df = pl.DataFrame(series['data'])
+        df = df.rename(col_to_snake(df.columns))
+        df = df.with_columns(pl.lit(series['seriesID']).alias('series_id'))
+        df = df.rename({'period': 'month'})
+        df = df.with_columns([
+            pl.col('month').str.strip_chars('M').cast(pl.Int64, strict=False).alias('month'),
+            pl.col('year').cast(pl.Int64, strict=False).alias('year'),
+            pl.col('value').cast(pl.Float64, strict=False).alias('value')
+        ])
+        df = df.drop_nulls(subset=['value'])
+        df = df.rename({'value': 'series_value'})
+        df = df.drop('footnotes')
+        df = df.with_columns(
+            pl.format("{}-{}-14", 'year', 'month').alias('ref_date')
+        )
         df_list.append(df)
-    df_cpi = pd.concat(df_list, ignore_index=True)
-    print(df_cpi)
+    df_cpi = pl.concat(df_list, how="vertical_relaxed")
     return df_cpi
 
