@@ -1,7 +1,7 @@
 [project]
 name = "pfin-back-etl"
-version = "0.1.0"
-description = "PersonalFinance Backend Extract/Transform/Load... Scripts to fetch data from FMP and tramsform it for population of PFin database (SupaBase)"
+version = "0.2.0"
+description = "Personal Finance Backend Extract/Transform/Load... Scripts to fetch datasets from external APIs, and tramsform them for populating the PFin database (SupaBase)."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
