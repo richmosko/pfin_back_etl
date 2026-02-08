@@ -13,6 +13,7 @@ Description:
 # library imports
 from datetime import date, datetime, timezone, timedelta
 import sqlalchemy as sqla
+import sqlalchemy.ext.automap as sqla_automap
 import polars as pl
 import fmpstab
 from pfin_back_etl import utils
@@ -222,7 +223,7 @@ class SBaseConn:
         # 2. Create the Automap Base, linking to your engine's metadata
         print("Initializing sqlalchemy MetaData object...")
         metadata = sqla.MetaData()
-        base = sqla.ext.automap.automap_base(metadata=metadata)
+        base = sqla_automap.automap_base(metadata=metadata)
 
         # 3. Reflect tables from each schema into the *same* metadata object
         print("Reflect database tables to sqlalchemy MetaData object...")
