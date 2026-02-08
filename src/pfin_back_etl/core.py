@@ -11,13 +11,8 @@ Description:
 """
 
 # library imports
-import json
-import psycopg2
-import time
 from datetime import date, datetime, timezone, timedelta
 import sqlalchemy as sqla
-from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy.ext.automap import automap_base
 import polars as pl
 import fmpstab
 from pfin_back_etl import utils
@@ -65,7 +60,6 @@ class PFinFMP(fmpstab.FMPStab):
 
         returns: df_fmp (polars dataframe of query results)
         """
-        fmp_api_name = fmp_func.__name__
         key_list = kwargs.pop(key)
         if not isinstance(key_list, list):
             key_list = [key_list]
@@ -160,7 +154,7 @@ class SBaseConn:
         Print the schema and table names reflected from supabase
         TBD:: Need to fill this out by polling all the table names per schema
         """
-        print(f"Iterating through automapped Classes:")
+        print("Iterating through automapped Classes:")
         schema_list = self.base.by_module.keys()
         for schema in schema_list:
             print("\n" + "==== " * 8)
@@ -221,23 +215,23 @@ class SBaseConn:
         DATABASE_URL += f"{DB_HOST}:{DB_PORT}/{DB_NAME}?sslmode=require"
 
         # 1. Construct the SQLAlchemy connection string and setup the engine
-        print(f"Setting up sqlalchemy engine...")
+        print("Setting up sqlalchemy engine...")
         engine = sqla.create_engine(DATABASE_URL, poolclass=sqla.pool.NullPool)
         # engine = sqla.create_engine(DATABASE_URL, poolclass=sqla.pool.NullPool, echo=True)
 
         # 2. Create the Automap Base, linking to your engine's metadata
-        print(f"Initializing sqlalchemy MetaData object...")
+        print("Initializing sqlalchemy MetaData object...")
         metadata = sqla.MetaData()
         base = sqla.ext.automap.automap_base(metadata=metadata)
 
         # 3. Reflect tables from each schema into the *same* metadata object
-        print(f"Reflect database tables to sqlalchemy MetaData object...")
+        print("Reflect database tables to sqlalchemy MetaData object...")
         for sch in self._schema_list:
             metadata.reflect(bind=engine, schema=sch)
             metadata.reflect(bind=engine, schema=sch)
 
         # 4. Prepare the Automap base
-        print(f"Automapping DB tables to sqlalchemy base object...")
+        print("Automapping DB tables to sqlalchemy base object...")
         base.prepare(
             autoload_with=engine, modulename_for_table=utils.sqla_modulename_for_table
         )
@@ -260,7 +254,7 @@ class SBaseConn:
         if not isinstance(key_list, list):
             key_list = [key_list]
 
-        result = session.execute(sqla.text("DISCARD TEMPORARY"))
+        session.execute(sqla.text("DISCARD TEMPORARY"))
         session.commit()
 
         tab_stag = tab_sbase.__table__.to_metadata(
@@ -273,29 +267,26 @@ class SBaseConn:
         tab_stag.constraints = set()
         tab_stag.foreign_keys = set()
 
+        tg_sch_name = tab_sbase.__table__.schema
         tg_name = tab_sbase.__table__.name
         st_name = tab_stag.name
-        sch_name = "pfin"
         stmt = sqla.text(f"""CREATE TEMP TABLE {st_name} AS
-                             SELECT * FROM {sch_name}.{tg_name};""")
-        result = session.execute(stmt)
+                             SELECT * FROM {tg_sch_name}.{tg_name};""")
+        session.execute(stmt)
 
         stmt = sqla.insert(tab_stag)
         session.execute(stmt, ldict_update)
 
         # SQL statement to update from staging table
-        t_tab_name = tab_sbase.__table__.name
-        s_tab_name = tab_stag.name
-
-        ud_stmt = f"""UPDATE {sch_name}.{tg_name} as TG"""
-        ud_stmt += f"""\nSET"""
+        ud_stmt = f"""UPDATE {tg_sch_name}.{tg_name} as TG"""
+        ud_stmt += """\nSET"""
         set_list = []
         for column in tab_sbase.__table__.columns:
             if column.name not in key_list:
                 set_list.append(f"""\n{column.name} = ST.{column.name}""")
         ud_stmt += ", ".join(set_list)
         ud_stmt += f"""\nFROM {st_name} as ST"""
-        ud_stmt += f"""\nWHERE """
+        ud_stmt += """\nWHERE """
         cond_list = []
         for key_col in key_list:
             cond_list.append(f"""TG.{key_col}=ST.{key_col}""")
@@ -303,7 +294,7 @@ class SBaseConn:
         ud_stmt += ";"
         stmt = sqla.text(ud_stmt)
         # print(stmt)
-        result = session.execute(stmt)
+        session.execute(stmt)
         session.commit()
         self.metadata.remove(tab_stag)
 
@@ -409,10 +400,10 @@ class PFinBackend(SBaseConn):
         update the existing data in the cpi table in case the data was revised.
         """
         print("\n" + "==== " * 16)
-        print(f"==== Updating pfin.cpi Table")
+        print("==== Updating pfin.cpi Table")
         api_key = self._params["BLS_API_KEY"]
 
-        print(f"Fetch current CPI data from the BLS...")
+        print("Fetch current CPI data from the BLS...")
         current_year = date.today().year
 
         # [richmosko]: FIXME... Get Series Name(s) from .env
@@ -422,24 +413,24 @@ class PFinBackend(SBaseConn):
         df_api = utils.clean_empty_str_df(df_api)
         # print(df_api)
 
-        print(f"Figure out what's already in pfin.cpi...")
+        print("Figure out what's already in pfin.cpi...")
         tab_sbase = self.base.by_module.pfin.cpi
         df_sbase = self.fetch_table_df(tab_sbase)
         # print(df_sbase)
 
-        print(f"Merging columns to (inner join) to limit what gets sent to DB...")
+        print("Merging columns to (inner join) to limit what gets sent to DB...")
         (common_cols, df_old, df_new) = self._calc_common_cols_df(
             tab_sbase, df_sbase, df_api
         )
         # print(common_cols)
 
-        print(f"Determining entries to insert...")
+        print("Determining entries to insert...")
         # [richmosko]: FIXME... key_list should inclue Series Name
         key_list = ["year", "month"]
         df_insert = self._isolate_new_rows_df(key_list, df_old, df_new)
         print(df_insert)
 
-        print(f"Determining entries to update...")
+        print("Determining entries to update...")
         df_update = df_old
         # [richmosko]: ensure primary key present
         df_update = df_update.with_columns(df_sbase["id"].alias("id"))
@@ -454,14 +445,14 @@ class PFinBackend(SBaseConn):
         Fetch asset date from the FMP API. Insert new data into SupaBase...
         """
         print("\n" + "==== " * 16)
-        print(f"==== Updating pfin.asset Table")
+        print("==== Updating pfin.asset Table")
 
-        print(f"Figure out what's already in pfin.asset...")
+        print("Figure out what's already in pfin.asset...")
         tab_sbase = self.base.by_module.pfin.asset
         df_sbase = self.fetch_table_df(tab_sbase)
         # print(f"  Existing Symbols: {df_sbase['symbol'].to_list()}")
 
-        print(f"Querying for asset category...")
+        print("Querying for asset category...")
         tab_acat = self.base.by_module.pfin.asset_cat
         stmt = (
             sqla.select(tab_acat.id)
@@ -472,7 +463,7 @@ class PFinBackend(SBaseConn):
         asset_cat_id = ldict[0]["id"]
         # print(f"pfin.asset_cat.id = {asset_cat_id}\n")
 
-        print(f"Generating a symbol list to process...")
+        print("Generating a symbol list to process...")
         # df_slist = self.fmp_client.get_screened_stocks(self._stock_screener_min_mkt_cap,
         #                                               self._stock_screener_result_limit)
         # sym_list = df_slist['symbol'].to_list()
@@ -489,7 +480,7 @@ class PFinBackend(SBaseConn):
             "MSFT",
         ]
 
-        print(f"Fetching data from Financial Modeling Prep...")
+        print("Fetching data from Financial Modeling Prep...")
         df_fmp = self.fmp_client.fetch_fmp_list_df(
             self.fmp_client.search_symbol, "query", query=sym_list, limit=1
         )
@@ -503,13 +494,13 @@ class PFinBackend(SBaseConn):
         )
         df_fmp = utils.clean_empty_str_df(df_fmp)
 
-        print(f"Merging columns to (inner join) to limit what gets sent to DB...")
+        print("Merging columns to (inner join) to limit what gets sent to DB...")
         (common_cols, df_old, df_new) = self._calc_common_cols_df(
             tab_sbase, df_sbase, df_fmp
         )
         # print(common_cols)
 
-        print(f"Determining entries to insert...")
+        print("Determining entries to insert...")
         key_list = ["symbol"]
         df_insert = self._isolate_new_rows_df(key_list, df_old, df_new)
         print(df_insert)
@@ -524,20 +515,20 @@ class PFinBackend(SBaseConn):
         fresh data.
         """
         print("\n" + "==== " * 16)
-        print(f"==== Updating pfin.equity_profile Table")
+        print("==== Updating pfin.equity_profile Table")
 
-        print(f"Figure out what's already in pfin.equity_profile...")
+        print("Figure out what's already in pfin.equity_profile...")
         tab_sbase = self.base.by_module.pfin.equity_profile
         df_sbase = self.fetch_table_df(tab_sbase)
         # print(df_sbase)
 
-        print(f"Compiling set of symbol profiles to fetch from FMP...")
+        print("Compiling set of symbol profiles to fetch from FMP...")
         asset_map = self._fetch_asset_map()
         id_list = list(asset_map.values())
         sym_list = list(asset_map.keys())
         # print(sym_list)
 
-        print(f"Fetching data from Financial Modeling Prep...")
+        print("Fetching data from Financial Modeling Prep...")
         key_list = ["symbol"]
         df_fmp = self.fmp_client.fetch_fmp_list_df(
             self.fmp_client.profile, "symbol", symbol=sym_list, limit=1
@@ -547,18 +538,18 @@ class PFinBackend(SBaseConn):
         df_fmp = utils.clean_empty_str_df(df_fmp)
         # print(df_fmp['asset_id'].to_list())
 
-        print(f"Merging columns to (inner join) to limit what gets sent to DB...")
+        print("Merging columns to (inner join) to limit what gets sent to DB...")
         (common_cols, df_old, df_new) = self._calc_common_cols_df(
             tab_sbase, df_sbase, df_fmp
         )
         # print(common_cols)
 
-        print(f"Determining entries to insert...")
+        print("Determining entries to insert...")
         key_list = "asset_id"
         df_insert = self._isolate_new_rows_df(key_list, df_old, df_new)
         print(df_insert)
 
-        print(f"Determining entries to update...")
+        print("Determining entries to update...")
         df_update = df_old
         # [richmosko]: primary key already present in FK asset_id
         print(df_update)
@@ -577,20 +568,20 @@ class PFinBackend(SBaseConn):
         PERIODS_TO_FETCH = YEARS_TO_FETCH * 4
 
         print("\n" + "==== " * 16)
-        print(f"==== Updating pfin.reporting_period Table")
+        print("==== Updating pfin.reporting_period Table")
 
-        print(f"Figure out what's already in pfin.reporting_period..")
+        print("Figure out what's already in pfin.reporting_period..")
         tab_sbase = self.base.by_module.pfin.reporting_period
         df_sbase = self.fetch_table_df(tab_sbase)
         # print(df_sbase)
 
-        print(f"Generating a set of symbols to fetch from FMP...")
+        print("Generating a set of symbols to fetch from FMP...")
         asset_map = self._fetch_asset_map()
         id_list = list(asset_map.values())
         sym_list = list(asset_map.keys())
         # print(asset_map)
 
-        print(f"Fetching data from Financial Modeling Prep...")
+        print("Fetching data from Financial Modeling Prep...")
         df_fmp = self.fmp_client.fetch_fmp_list_df(
             self.fmp_client.income_statement,
             "symbol",
@@ -622,8 +613,8 @@ class PFinBackend(SBaseConn):
             .alias("accepted_date")
         )
 
-        print(f"Create generic 'future' reporting periods for EPS & Rev estimates...")
-        tmp_date_now = datetime.now(timezone.utc)
+        print("Create generic 'future' reporting periods for EPS & Rev estimates...")
+        # tmp_date_now = datetime.now(timezone.utc)
         tmp_date_fut = datetime.fromisoformat(self._tmp_date_fut).replace(
             tzinfo=timezone.utc
         )
@@ -641,18 +632,18 @@ class PFinBackend(SBaseConn):
             df_fmp = pl.concat([df_fmp, df_row], how="diagonal")
         # print(df_fmp)
 
-        print(f"Merging columns to (inner join) to limit what gets sent to DB...")
+        print("Merging columns to (inner join) to limit what gets sent to DB...")
         (common_cols, df_old, df_new) = self._calc_common_cols_df(
             tab_sbase, df_sbase, df_fmp
         )
         # print(common_cols)
 
-        print(f"Determining entries to insert...")
+        print("Determining entries to insert...")
         key_list = ["asset_id", "fiscal_year", "period"]
         df_insert = self._isolate_new_rows_df(key_list, df_old, df_new)
         print(df_insert)
 
-        print(f"Determining entries to update...")
+        print("Determining entries to update...")
         df_update = df_old
         # [richmosko]: ensure primary key present
         df_update = df_update.with_columns(df_sbase["id"].alias("id"))
@@ -672,9 +663,9 @@ class PFinBackend(SBaseConn):
         PERIODS_TO_FETCH = YEARS_TO_FETCH * 4
 
         print("\n" + "==== " * 16)
-        print(f"==== Updating pfin.income_statement Table")
+        print("==== Updating pfin.income_statement Table")
 
-        print(f"Figure out what's already in pfin.reporting_period..")
+        print("Figure out what's already in pfin.reporting_period..")
         tab_rp = self.base.by_module.pfin.reporting_period
         df_rp = self.fetch_table_df(tab_rp)
         df_rp_map = df_rp[["id", "asset_id", "filing_date"]]
@@ -684,13 +675,13 @@ class PFinBackend(SBaseConn):
         df_sbase = self.fetch_table_df(tab_sbase)
         # print(df_sbase)
 
-        print(f"Generating a set of symbols to fetch from FMP...")
+        print("Generating a set of symbols to fetch from FMP...")
         asset_map = self._fetch_asset_map()
-        id_list = list(asset_map.values())
+        # id_list = list(asset_map.values())
         sym_list = list(asset_map.keys())
         # print(asset_map)
 
-        print(f"Fetching income_statement data from Financial Modeling Prep...")
+        print("Fetching income_statement data from Financial Modeling Prep...")
         df_fmp = self.fmp_client.fetch_fmp_list_df(
             self.fmp_client.income_statement,
             "symbol",
@@ -727,18 +718,18 @@ class PFinBackend(SBaseConn):
         df_fmp = df_fmp.rename({"id": "reporting_period_id"})
         # print(df_fmp['reporting_period_id'].to_list())
 
-        print(f"Merging columns to (inner join) to limit what gets sent to DB...")
+        print("Merging columns to (inner join) to limit what gets sent to DB...")
         (common_cols, df_old, df_new) = self._calc_common_cols_df(
             tab_sbase, df_sbase, df_fmp
         )
         # print(common_cols)
 
-        print(f"Determining entries to insert...")
+        print("Determining entries to insert...")
         key_list = "reporting_period_id"
         df_insert = self._isolate_new_rows_df(key_list, df_old, df_new)
         print(df_insert)
 
-        print(f"Determining entries to update...")
+        print("Determining entries to update...")
         df_update = df_old
         # [richmosko]: primary key already present in FK reporting_period_id
         print(df_update)
@@ -757,26 +748,26 @@ class PFinBackend(SBaseConn):
         PERIODS_TO_FETCH = YEARS_TO_FETCH * 4
 
         print("\n" + "==== " * 16)
-        print(f"==== Updating pfin.balance_sheet_statement Table")
+        print("==== Updating pfin.balance_sheet_statement Table")
 
-        print(f"Figure out what's already in pfin.reporting_period..")
+        print("Figure out what's already in pfin.reporting_period..")
         tab_rp = self.base.by_module.pfin.reporting_period
         df_rp = self.fetch_table_df(tab_rp)
         df_rp_map = df_rp[["id", "asset_id", "filing_date"]]
         # print(df_rp_map)
 
-        print(f"Figure out what's already in pfin.balance_sheet_statement..")
+        print("Figure out what's already in pfin.balance_sheet_statement..")
         tab_sbase = self.base.by_module.pfin.balance_sheet_statement
         df_sbase = self.fetch_table_df(tab_sbase)
         # print(df_sbase)
 
-        print(f"Generating a set of symbols to fetch from FMP...")
+        print("Generating a set of symbols to fetch from FMP...")
         asset_map = self._fetch_asset_map()
-        id_list = list(asset_map.values())
+        # id_list = list(asset_map.values())
         sym_list = list(asset_map.keys())
         # print(asset_map)
 
-        print(f"Fetching balance_sheet_statement data from Financial Modeling Prep...")
+        print("Fetching balance_sheet_statement data from Financial Modeling Prep...")
         df_fmp = self.fmp_client.fetch_fmp_list_df(
             self.fmp_client.balance_sheet_statement,
             "symbol",
@@ -813,18 +804,18 @@ class PFinBackend(SBaseConn):
         df_fmp = df_fmp.rename({"id": "reporting_period_id"})
         # print(df_fmp['reporting_period_id'].to_list())
 
-        print(f"Merging columns to (inner join) to limit what gets sent to DB...")
+        print("Merging columns to (inner join) to limit what gets sent to DB...")
         (common_cols, df_old, df_new) = self._calc_common_cols_df(
             tab_sbase, df_sbase, df_fmp
         )
         # print(common_cols)
 
-        print(f"Determining entries to insert...")
+        print("Determining entries to insert...")
         key_list = "reporting_period_id"
         df_insert = self._isolate_new_rows_df(key_list, df_old, df_new)
         print(df_insert)
 
-        print(f"Determining entries to update...")
+        print("Determining entries to update...")
         df_update = df_old
         # [richmosko]: primary key already present in FK reporting_period_id
         print(df_update)
@@ -843,26 +834,26 @@ class PFinBackend(SBaseConn):
         PERIODS_TO_FETCH = YEARS_TO_FETCH * 4
 
         print("\n" + "==== " * 16)
-        print(f"==== Updating pfin.cash_flow_statement Table")
+        print("==== Updating pfin.cash_flow_statement Table")
 
-        print(f"Figure out what's already in pfin.reporting_period..")
+        print("Figure out what's already in pfin.reporting_period..")
         tab_rp = self.base.by_module.pfin.reporting_period
         df_rp = self.fetch_table_df(tab_rp)
         df_rp_map = df_rp[["id", "asset_id", "filing_date"]]
         # print(df_rp_map)
 
-        print(f"Figure out what's already in pfin.cash_flow_statement..")
+        print("Figure out what's already in pfin.cash_flow_statement..")
         tab_sbase = self.base.by_module.pfin.cash_flow_statement
         df_sbase = self.fetch_table_df(tab_sbase)
         # print(df_sbase)
 
-        print(f"Generating a set of symbols to fetch from FMP...")
+        print("Generating a set of symbols to fetch from FMP...")
         asset_map = self._fetch_asset_map()
-        id_list = list(asset_map.values())
+        # id_list = list(asset_map.values())
         sym_list = list(asset_map.keys())
         # print(asset_map)
 
-        print(f"Fetching cash_flow_statement data from Financial Modeling Prep...")
+        print("Fetching cash_flow_statement data from Financial Modeling Prep...")
         df_fmp = self.fmp_client.fetch_fmp_list_df(
             self.fmp_client.cash_flow_statement,
             "symbol",
@@ -899,18 +890,18 @@ class PFinBackend(SBaseConn):
         df_fmp = df_fmp.rename({"id": "reporting_period_id"})
         # print(df_fmp['reporting_period_id'].to_list())
 
-        print(f"Merging columns to (inner join) to limit what gets sent to DB...")
+        print("Merging columns to (inner join) to limit what gets sent to DB...")
         (common_cols, df_old, df_new) = self._calc_common_cols_df(
             tab_sbase, df_sbase, df_fmp
         )
         # print(common_cols)
 
-        print(f"Determining entries to insert...")
+        print("Determining entries to insert...")
         key_list = "reporting_period_id"
         df_insert = self._isolate_new_rows_df(key_list, df_old, df_new)
         print(df_insert)
 
-        print(f"Determining entries to update...")
+        print("Determining entries to update...")
         df_update = df_old
         # [richmosko]: primary key already present in FK reporting_period_id
         print(df_update)
@@ -938,16 +929,16 @@ class PFinBackend(SBaseConn):
         PERIODS_TO_FETCH = YEARS_TO_FETCH * 4
 
         print("\n" + "==== " * 16)
-        print(f"==== Updating pfin.earning Table")
+        print("==== Updating pfin.earning Table")
 
-        print(f"Figure out what's already in pfin.reporting_period...")
+        print("Figure out what's already in pfin.reporting_period...")
         tab_rp = self.base.by_module.pfin.reporting_period
         df_rp = self.fetch_table_df(tab_rp)
         df_rp_map = df_rp[["id", "asset_id", "filing_date"]]
         # print(df_rp_map)
 
         print(
-            f"Find the latest (current) report date for each asset_id in pfin.reporting_period..."
+            "Find the latest (current) report date for each asset_id in pfin.reporting_period..."
         )
         asset_id_list = df_rp_map["asset_id"].unique().to_list()
         latest_rpt = {}
@@ -958,18 +949,18 @@ class PFinBackend(SBaseConn):
             latest_rpt[asset_id] = df_tmp.item(1, "filing_date")
         # print(f"  Latest Reports: {latest_rpt}")
 
-        print(f"Figure out what's already in pfin.earning...")
+        print("Figure out what's already in pfin.earning...")
         tab_sbase = self.base.by_module.pfin.earning
         df_sbase = self.fetch_table_df(tab_sbase)
         # print(df_sbase)
 
-        print(f"Generating a set of symbols to fetch from FMP...")
+        print("Generating a set of symbols to fetch from FMP...")
         asset_map = self._fetch_asset_map()
         id_list = list(asset_map.values())
         sym_list = list(asset_map.keys())
         # print(asset_map)
 
-        print(f"Fetching earning data from Financial Modeling Prep...")
+        print("Fetching earning data from Financial Modeling Prep...")
         df_fmp = self.fmp_client.fetch_fmp_list_df(
             self.fmp_client.earnings,
             "symbol",
@@ -998,7 +989,7 @@ class PFinBackend(SBaseConn):
         df_fmp = df_fmp.with_columns(pl.lit(None).alias("reporting_period_id"))
         # print(df_fmp)
 
-        print(f"Match earnings reports to posted reporting_periods...")
+        print("Match earnings reports to posted reporting_periods...")
         # sort and add a temporary row_idx as primary keys
         df_rp_map = df_rp_map.sort("filing_date", descending=True).with_row_index(
             name="row_idx"
@@ -1040,9 +1031,9 @@ class PFinBackend(SBaseConn):
         df_fmp = df_fmp.filter(~pl.col("row_idx").is_in(fmp_drop_list))
 
         print(
-            f"Set remaining unmatched earnings reports to future reporting_periods..."
+            "Set remaining unmatched earnings reports to future reporting_periods..."
         )
-        tmp_date_now = datetime.now(timezone.utc)
+        # tmp_date_now = datetime.now(timezone.utc)
         tmp_date_fut = (
             datetime.fromisoformat(self._tmp_date_fut)
             .replace(tzinfo=timezone.utc)
@@ -1070,18 +1061,18 @@ class PFinBackend(SBaseConn):
         )
         # print(df_fmp)
 
-        print(f"Merging columns to (inner join) to limit what gets sent to DB...")
+        print("Merging columns to (inner join) to limit what gets sent to DB...")
         (common_cols, df_old, df_new) = self._calc_common_cols_df(
             tab_sbase, df_sbase, df_fmp
         )
         # print(common_cols)
 
-        print(f"Determining entries to insert...")
+        print("Determining entries to insert...")
         key_list = "reporting_period_id"
         df_insert = self._isolate_new_rows_df(key_list, df_old, df_new)
         print(df_insert)
 
-        print(f"Determining entries to update...")
+        print("Determining entries to update...")
         df_update = df_old
         # [richmosko]: primary key already present in FK reporting_period_id
         print(df_update)
@@ -1101,20 +1092,20 @@ class PFinBackend(SBaseConn):
         DAYS_TO_FETCH = YEARS_TO_FETCH * 365
 
         print("\n" + "==== " * 16)
-        print(f"==== Updating pfin.eod_price Table")
+        print("==== Updating pfin.eod_price Table")
 
-        print(f"Figure out what's already in pfin.eod_price...")
+        print("Figure out what's already in pfin.eod_price...")
         tab_sbase = self.base.by_module.pfin.eod_price
         df_sbase = self.fetch_table_df(tab_sbase)
         # print(df_sbase)
 
-        print(f"Generating a set of symbols to fetch from FMP...")
+        print("Generating a set of symbols to fetch from FMP...")
         asset_map = self._fetch_asset_map()
-        id_list = list(asset_map.values())
+        # id_list = list(asset_map.values())
         sym_list = list(asset_map.keys())
         # print(asset_map)
 
-        print(f"Fetching EOD historical data from Financial Modeling Prep...")
+        print("Fetching EOD historical data from Financial Modeling Prep...")
         date_5y_ago = datetime.now() - timedelta(days=DAYS_TO_FETCH)
         date_5y_ago = date_5y_ago.strftime("%Y-%m-%d")
         df_fmp = self.fmp_client.fetch_fmp_list_df(
@@ -1137,18 +1128,18 @@ class PFinBackend(SBaseConn):
         )
         # print(df_fmp)
 
-        print(f"Merging columns to (inner join) to limit what gets sent to DB...")
+        print("Merging columns to (inner join) to limit what gets sent to DB...")
         (common_cols, df_old, df_new) = self._calc_common_cols_df(
             tab_sbase, df_sbase, df_fmp
         )
         # print(common_cols)
 
-        print(f"Determining entries to insert...")
+        print("Determining entries to insert...")
         key_list = ["asset_id", "end_date"]
         df_insert = self._isolate_new_rows_df(key_list, df_old, df_new)
         print(df_insert)
 
-        print(f"Determining entries to update...")
+        print("Determining entries to update...")
         df_update = df_old
         # [richmosko]: ensure primary key present
         df_update = df_update.with_columns(df_sbase["id"].alias("id"))
@@ -1174,11 +1165,11 @@ class PFinBackend(SBaseConn):
             sqla.select(tab_asset.symbol, tab_asset.id)
             .join(tab_asset_cat)
             .where(tab_asset_cat.cat == "Equity")
-            .where(tab_asset.has_financials == True)
+            .where(tab_asset.has_financials)
         )
         ldict = self._fetch_sbase_ldict(stmt)
-        id_list = [d["id"] for d in ldict]
-        sym_list = [d["symbol"] for d in ldict]
+        # id_list = [d["id"] for d in ldict]
+        # sym_list = [d["symbol"] for d in ldict]
         asset_map = {}
         for item in ldict:
             sym = item["symbol"]
@@ -1198,8 +1189,9 @@ class PFinBackend(SBaseConn):
         returns:
             df_dtype:      schema corrected polars dataframe
         """
-        c_dict = pfb.get_column_dict(tab_sbase)
-        df_schema = df_sbase.schema
+        # c_dict = pfb.get_column_dict(tab_sbase)
+        # df_schema = df_sbase.schema
+        print("...TODO: METHOD NOT YET IMPLEMENTED...")
         # TODO: Creating a big case statement for all the data types is a big
         #       undertaking... Not urgent to impleent this right away.
         return None

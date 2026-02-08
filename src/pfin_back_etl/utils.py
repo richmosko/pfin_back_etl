@@ -10,14 +10,10 @@ Description:
 # library imports
 import os
 import dotenv
-import datetime as dt
-from datetime import date
 import re
 import requests
 import json
-import sqlalchemy as sqla
 import polars as pl
-import fmpstab
 
 
 def col_to_snake(col_list):
