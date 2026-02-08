@@ -1,5 +1,5 @@
 [project]
-name = "pfin-back-etl"
+name = "pfin_back_etl"
 version = "0.2.0"
 description = "Personal Finance Backend Extract/Transform/Load... Scripts to fetch datasets from external APIs, and tramsform them for populating the PFin database (SupaBase)."
 readme = "README.md"
@@ -11,4 +11,13 @@ dependencies = [
     "pyarrow>=23.0.0",
     "python-dotenv>=1.2.1",
     "sqlalchemy>=2.0.46",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.0",
+]
+test = [
+    "pytest>=9.0.2",
+    "pytest-cov>=7.0.0",
 ]

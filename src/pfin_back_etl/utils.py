@@ -26,16 +26,17 @@ def col_to_snake(col_list):
         col_dict[col] = re.sub(r"([a-z])([A-Z])", r"\1_\2", col).lower()
     return col_dict
 
+
 def ldict_to_df(ldict, tab):
     cols = tab.columns.keys()
     df = pl.DataFrame(schema=cols) if not ldict else pl.DataFrame(ldict)
     return df
 
+
 def clean_empty_str_df(df):
-    df_clean = df.with_columns(
-        pl.col(pl.String).replace("", None)
-    )
+    df_clean = df.with_columns(pl.col(pl.String).replace("", None))
     return df_clean
+
 
 def apply_schema_df(df_src, df_tgt):
     """
@@ -56,6 +57,7 @@ def apply_schema_df(df_src, df_tgt):
     df_cast = df_tgt.cast(schema_tgt)
     return df_cast
 
+
 def load_env_variables(env_prefix):
     """
     Load the environmental variables from a '.env' file. The variables read
@@ -70,30 +72,35 @@ def load_env_variables(env_prefix):
     dotenv.load_dotenv()
 
     # Check for API Key in FMP_API_KEY env variable
-    key_name = 'FMP_API_KEY'
+    key_name = "FMP_API_KEY"
     key_value = os.getenv(key_name)
-    params['FMP_API_KEY'] = key_value
+    params["FMP_API_KEY"] = key_value
     if key_value is not None:
         print(f"{key_name} value found...")
     else:
-        raise ValueError(f"Environment variable {key_name} does not exist in .env file.")
+        raise ValueError(
+            f"Environment variable {key_name} does not exist in .env file."
+        )
 
     # Check for BLS API Key in env variable
-    key_name = 'BLS_API_KEY'
+    key_name = "BLS_API_KEY"
     key_value = os.getenv(key_name)
-    params['BLS_API_KEY'] = key_value
+    params["BLS_API_KEY"] = key_value
     if key_value is not None:
         print(f"{key_name} value found...")
     else:
-        raise ValueError(f"Environment variable {key_name} does not exist in .env file.")
+        raise ValueError(
+            f"Environment variable {key_name} does not exist in .env file."
+        )
 
     # Fetch other env variables
-    params['DB_USER'] = os.getenv(env_prefix+'DB_USER')
-    params['DB_HOST'] = os.getenv(env_prefix+'DB_HOST')
-    params['DB_PORT'] = os.getenv(env_prefix+'DB_PORT')
-    params['DB_NAME'] = os.getenv(env_prefix+'DB_NAME')
-    params['DB_PASSWORD'] = os.getenv(env_prefix+'DB_PASSWORD')
+    params["DB_USER"] = os.getenv(env_prefix + "DB_USER")
+    params["DB_HOST"] = os.getenv(env_prefix + "DB_HOST")
+    params["DB_PORT"] = os.getenv(env_prefix + "DB_PORT")
+    params["DB_NAME"] = os.getenv(env_prefix + "DB_NAME")
+    params["DB_PASSWORD"] = os.getenv(env_prefix + "DB_PASSWORD")
     return params
+
 
 def sqla_modulename_for_table(tablename, declarativetable, reflecttable):
     """
@@ -112,16 +119,18 @@ def sqla_modulename_for_table(tablename, declarativetable, reflecttable):
         # Default module name if no schema is present
         return "public"
 
+
 def sqla_resolve_referred_schema(table, to_metadata, constraint, referred_schema):
     """
     Dynamically determines the target schema for a foreign key reference
     in sqlalchemy. Used when creating a temp table for a staging update.
     """
-    if referred_schema == 'source_schema':
-        return 'target_schema' # Map 'source_schema' to 'target_schema'
+    if referred_schema == "source_schema":
+        return "target_schema"  # Map 'source_schema' to 'target_schema'
     return referred_schema
 
-def fetch_cpi_df (api_key, startyear, endyear, series_id_lst):
+
+def fetch_cpi_df(api_key, startyear, endyear, series_id_lst):
     """
     Fetch Consumer Price Index data from the Brureau of Labor Statistics.
 
@@ -133,37 +142,44 @@ def fetch_cpi_df (api_key, startyear, endyear, series_id_lst):
     returns:
         df_cpi:            polars dataframe of CPI index data
     """
-    headers = {'Content-type': 'application/json'}
-    data = json.dumps({"registrationkey": api_key,
-                       "seriesid": series_id_lst,
-                       "startyear":startyear,
-                       "endyear":endyear})
-    p = requests.post('https://api.bls.gov/publicAPI/v2/timeseries/data/',
-                      data=data, headers=headers)
+    headers = {"Content-type": "application/json"}
+    data = json.dumps(
+        {
+            "registrationkey": api_key,
+            "seriesid": series_id_lst,
+            "startyear": startyear,
+            "endyear": endyear,
+        }
+    )
+    p = requests.post(
+        "https://api.bls.gov/publicAPI/v2/timeseries/data/", data=data, headers=headers
+    )
     json_data = json.loads(p.text)
 
     print(f"  JSON STATUS: {json_data['status']}")
-    if json_data['status'] != 'REQUEST_SUCCEEDED':
-        raise Exception('BLS CPI fetch request unsuccessful')
+    if json_data["status"] != "REQUEST_SUCCEEDED":
+        raise Exception("BLS CPI fetch request unsuccessful")
 
     df_list = []
-    for series in json_data['Results']['series']:
-        df = pl.DataFrame(series['data'])
+    for series in json_data["Results"]["series"]:
+        df = pl.DataFrame(series["data"])
         df = df.rename(col_to_snake(df.columns))
-        df = df.with_columns(pl.lit(series['seriesID']).alias('series_id'))
-        df = df.rename({'period': 'month'})
-        df = df.with_columns([
-            pl.col('month').str.strip_chars('M').cast(pl.Int64, strict=False).alias('month'),
-            pl.col('year').cast(pl.Int64, strict=False).alias('year'),
-            pl.col('value').cast(pl.Float64, strict=False).alias('value')
-        ])
-        df = df.drop_nulls(subset=['value'])
-        df = df.rename({'value': 'series_value'})
-        df = df.drop('footnotes')
+        df = df.with_columns(pl.lit(series["seriesID"]).alias("series_id"))
+        df = df.rename({"period": "month"})
         df = df.with_columns(
-            pl.format("{}-{}-14", 'year', 'month').alias('ref_date')
+            [
+                pl.col("month")
+                .str.strip_chars("M")
+                .cast(pl.Int64, strict=False)
+                .alias("month"),
+                pl.col("year").cast(pl.Int64, strict=False).alias("year"),
+                pl.col("value").cast(pl.Float64, strict=False).alias("value"),
+            ]
         )
+        df = df.drop_nulls(subset=["value"])
+        df = df.rename({"value": "series_value"})
+        df = df.drop("footnotes")
+        df = df.with_columns(pl.format("{}-{}-14", "year", "month").alias("ref_date"))
         df_list.append(df)
     df_cpi = pl.concat(df_list, how="vertical_relaxed")
     return df_cpi
-
