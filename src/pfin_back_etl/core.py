@@ -1030,9 +1030,7 @@ class PFinBackend(SBaseConn):
         )
         df_fmp = df_fmp.filter(~pl.col("row_idx").is_in(fmp_drop_list))
 
-        print(
-            "Set remaining unmatched earnings reports to future reporting_periods..."
-        )
+        print("Set remaining unmatched earnings reports to future reporting_periods...")
         # tmp_date_now = datetime.now(timezone.utc)
         tmp_date_fut = (
             datetime.fromisoformat(self._tmp_date_fut)
