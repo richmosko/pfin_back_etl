@@ -65,11 +65,14 @@ class PFinFMP(fmpstab.FMPStab):
         if not isinstance(key_list, list):
             key_list = [key_list]
 
-        df_list = []
+        df_fmp = pl.DataFrame()
         for item in key_list:
             kwargs[key] = item
-            df_list.append(self.fetch_fmp_df(fmp_func, **kwargs))
-        df_fmp = pl.concat(df_list, how="vertical_relaxed")
+            df_tmp = self.fetch_fmp_df(fmp_func, **kwargs)
+            if df_fmp.is_empty():
+                df_fmp = df_tmp
+            elif not df_tmp.is_empty():
+                df_fmp = pl.concat([df_fmp, df_tmp], how="vertical_relaxed")
         return df_fmp
 
     def fetch_fmp_df(self, fmp_func, **kwargs):
@@ -334,9 +337,31 @@ class SBaseConn:
         """
         if len(df_old) == 0:
             # special handling of empty table... as data types were not inferred
+            # insert all rows
             return df_new
 
         df_mrg = df_new.join(df_old, on=on_key, how="anti")
+        df_mrg = utils.apply_schema_df(df_old, df_mrg)
+        return df_mrg
+
+    def _isolate_updated_rows_df(self, on_key, df_old, df_new):
+        """
+        Compare the existing and new pandas dataframs, and isolate which
+        rows are overlapping and should be updated
+        args:
+            on_key:        list of column names to use for key matching
+            df_old:        existing dataframe
+            df_new:        dataframe with new and updated entries
+        returns:
+            df_mrg:        polars dataframe with only the updated entries to
+                           update (can be empty dataframe)
+        """
+        if len(df_old) == 0:
+            # special handling of empty table... as data types were not inferred
+            # update no rows
+            return df_old
+
+        df_mrg = df_new.join(df_old, on=on_key, how="semi")
         df_mrg = utils.apply_schema_df(df_old, df_mrg)
         return df_mrg
 
@@ -379,23 +404,23 @@ class PFinBackend(SBaseConn):
         self._tmp_year_fut = 4000
         self._tmp_period_fut = "NA"
 
-    def update_table_all(self):
+    def update_table_all(self, sym_list=None):
         """
         Update all tables that get data from external API services... Meant to
         be run as a scheduled job nightly.
         """
         self.update_table_cpi()
-        self.update_table_asset()
-        self.update_table_equity_profile()
-        self.update_table_reporting_period()
-        self.update_table_income_statement()
-        self.update_table_balance_sheet_statement()
-        self.update_table_cash_flow_statement()
-        self.update_table_earning()
-        self.update_table_eod_price()
+        self.update_table_asset(sym_list=sym_list)
+        self.update_table_equity_profile(sym_list=sym_list)
+        self.update_table_reporting_period(sym_list=sym_list)
+        self.update_table_income_statement(sym_list=sym_list)
+        self.update_table_balance_sheet_statement(sym_list=sym_list)
+        self.update_table_cash_flow_statement(sym_list=sym_list)
+        self.update_table_earning(sym_list=sym_list)
+        self.update_table_eod_price(sym_list=sym_list)
         return
 
-    def update_table_cpi(self):
+    def update_table_cpi(self, num_years=10):
         """
         Fetch CPI data from the BLS. Insert new data into SupaBase... otherwise
         update the existing data in the cpi table in case the data was revised.
@@ -406,9 +431,11 @@ class PFinBackend(SBaseConn):
 
         print("Fetch current CPI data from the BLS...")
         current_year = date.today().year
+        starting_year = current_year - num_years + 1 # includes current year
+        print(f"  Fetching years {starting_year} to {current_year}:")
 
         # [richmosko]: FIXME... Get Series Name(s) from .env
-        df_api = utils.fetch_cpi_df(api_key, "2017", current_year, ["CUUR0000SA0"])
+        df_api = utils.fetch_cpi_df(api_key, starting_year, current_year, ["CUUR0000SA0"])
         # df_api = fetch_cpi(api_key, '2022', '2026', ['CUUR0000SA0','SUUR0000SA0'])
         df_api = df_api.with_columns(pl.lit("cpi-u").alias("series_name"))
         df_api = utils.clean_empty_str_df(df_api)
@@ -432,18 +459,24 @@ class PFinBackend(SBaseConn):
         print(df_insert)
 
         print("Determining entries to update...")
-        df_update = df_old
-        # [richmosko]: ensure primary key present
-        df_update = df_update.with_columns(df_sbase["id"].alias("id"))
+        df_update = self._isolate_updated_rows_df(key_list, df_old, df_new)
+        # [richmosko]: add back primary key for update
+        df_prikey = df_sbase.select(key_list + ["id"])
+        df_update = df_update.join(df_prikey, on=key_list, how="left")
         print(df_update)
 
         self.insert_table_df(tab_sbase, df_insert)
         self.update_table_df(tab_sbase, "id", df_update)
         return
 
-    def update_table_asset(self):
+    def update_table_asset(self, sym_list=None):
         """
         Fetch asset date from the FMP API. Insert new data into SupaBase...
+
+        args:
+            sym_list:      (optional) list of symbols to fetch and update
+                           When set to None, this method performs a stock-screen
+                           API call to populate the sym_list.
         """
         print("\n" + "==== " * 16)
         print("==== Updating pfin.asset Table")
@@ -464,22 +497,14 @@ class PFinBackend(SBaseConn):
         asset_cat_id = ldict[0]["id"]
         # print(f"pfin.asset_cat.id = {asset_cat_id}\n")
 
-        print("Generating a symbol list to process...")
-        # df_slist = self.fmp_client.get_screened_stocks(self._stock_screener_min_mkt_cap,
-        #                                               self._stock_screener_result_limit)
-        # sym_list = df_slist['symbol'].to_list()
-        sym_list = [
-            "NVDA",
-            "AAPL",
-            "IREN",
-            "V",
-            "ALAB",
-            "APP",
-            "GOOGL",
-            "META",
-            "ABXL",
-            "MSFT",
-        ]
+        # print("Generating a symbol list to process...")
+        if not sym_list:
+            print("Generating a symbol list to process...")
+            df_slist = self.fmp_client.get_screened_stocks(
+                self._stock_screener_min_mkt_cap,
+                self._stock_screener_result_limit
+            )
+            sym_list = df_slist['symbol'].to_list()
 
         print("Fetching data from Financial Modeling Prep...")
         df_fmp = self.fmp_client.fetch_fmp_list_df(
@@ -509,7 +534,7 @@ class PFinBackend(SBaseConn):
         self.insert_table_df(tab_sbase, df_insert)
         return
 
-    def update_table_equity_profile(self):
+    def update_table_equity_profile(self, sym_list=None):
         """
         Fetch extended Equity Profile data from FMP using the equity-profile API.
         Insert new entries into SupaBase, otherwise update existing entries with
@@ -524,7 +549,10 @@ class PFinBackend(SBaseConn):
         # print(df_sbase)
 
         print("Compiling set of symbol profiles to fetch from FMP...")
-        asset_map = self._fetch_asset_map()
+        asset_map = self._fetch_asset_map_financials()
+        if sym_list:
+            # [richmosko]: Only use subset of symbols
+            asset_map = {sym: asset_map[sym] for sym in sym_list}
         id_list = list(asset_map.values())
         sym_list = list(asset_map.keys())
         # print(sym_list)
@@ -546,12 +574,12 @@ class PFinBackend(SBaseConn):
         # print(common_cols)
 
         print("Determining entries to insert...")
-        key_list = "asset_id"
+        key_list = ["asset_id"]
         df_insert = self._isolate_new_rows_df(key_list, df_old, df_new)
         print(df_insert)
 
         print("Determining entries to update...")
-        df_update = df_old
+        df_update = self._isolate_updated_rows_df(key_list, df_old, df_new)
         # [richmosko]: primary key already present in FK asset_id
         print(df_update)
 
@@ -559,7 +587,7 @@ class PFinBackend(SBaseConn):
         self.update_table_df(tab_sbase, key_list, df_update)
         return
 
-    def update_table_reporting_period(self):
+    def update_table_reporting_period(self, sym_list=None):
         """
         Fetch reporting-period data from FMP using the income-statement API.
         Insert new entries into SupaBase, otherwise update existing entries with
@@ -577,7 +605,10 @@ class PFinBackend(SBaseConn):
         # print(df_sbase)
 
         print("Generating a set of symbols to fetch from FMP...")
-        asset_map = self._fetch_asset_map()
+        asset_map = self._fetch_asset_map_financials()
+        if sym_list:
+            # [richmosko]: Only use subset of symbols
+            asset_map = {sym: asset_map[sym] for sym in sym_list}
         id_list = list(asset_map.values())
         sym_list = list(asset_map.keys())
         # print(asset_map)
@@ -645,16 +676,17 @@ class PFinBackend(SBaseConn):
         print(df_insert)
 
         print("Determining entries to update...")
-        df_update = df_old
-        # [richmosko]: ensure primary key present
-        df_update = df_update.with_columns(df_sbase["id"].alias("id"))
+        df_update = self._isolate_updated_rows_df(key_list, df_old, df_new)
+        # [richmosko]: add back primary key for update
+        df_prikey = df_sbase.select(key_list + ["id"])
+        df_update = df_update.join(df_prikey, on=key_list, how="left")
         print(df_update)
 
         self.insert_table_df(tab_sbase, df_insert)
         self.update_table_df(tab_sbase, "id", df_update)
         return
 
-    def update_table_income_statement(self):
+    def update_table_income_statement(self, sym_list=None):
         """
         Fetch income-statement data from the FMP API.
         Insert new entries into SupaBase, otherwise update existing entries with
@@ -669,7 +701,7 @@ class PFinBackend(SBaseConn):
         print("Figure out what's already in pfin.reporting_period..")
         tab_rp = self.base.by_module.pfin.reporting_period
         df_rp = self.fetch_table_df(tab_rp)
-        df_rp_map = df_rp[["id", "asset_id", "filing_date"]]
+        df_rp_map = df_rp[["id", "asset_id", "fiscal_year", "period"]]
         # print(df_rp_map)
 
         tab_sbase = self.base.by_module.pfin.income_statement
@@ -677,7 +709,10 @@ class PFinBackend(SBaseConn):
         # print(df_sbase)
 
         print("Generating a set of symbols to fetch from FMP...")
-        asset_map = self._fetch_asset_map()
+        asset_map = self._fetch_asset_map_financials()
+        if sym_list:
+            # [richmosko]: Only use subset of symbols
+            asset_map = {sym: asset_map[sym] for sym in sym_list}
         # id_list = list(asset_map.values())
         sym_list = list(asset_map.keys())
         # print(asset_map)
@@ -713,7 +748,7 @@ class PFinBackend(SBaseConn):
             .str.to_datetime(strict=False, time_zone="UTC")
             .alias("accepted_date")
         )
-        uq_cols = ["asset_id", "filing_date"]
+        uq_cols = ["asset_id", "fiscal_year", "period"]
         df_fmp = df_rp_map.join(df_fmp, on=uq_cols, how="inner")
         df_fmp = df_fmp.drop(uq_cols)
         df_fmp = df_fmp.rename({"id": "reporting_period_id"})
@@ -731,7 +766,7 @@ class PFinBackend(SBaseConn):
         print(df_insert)
 
         print("Determining entries to update...")
-        df_update = df_old
+        df_update = self._isolate_updated_rows_df(key_list, df_old, df_new)
         # [richmosko]: primary key already present in FK reporting_period_id
         print(df_update)
 
@@ -739,7 +774,7 @@ class PFinBackend(SBaseConn):
         self.update_table_df(tab_sbase, key_list, df_update)
         return
 
-    def update_table_balance_sheet_statement(self):
+    def update_table_balance_sheet_statement(self, sym_list=None):
         """
         Fetch balance-sheet-statement data from the FMP API.
         Insert new entries into SupaBase, otherwise update existing entries with
@@ -754,7 +789,7 @@ class PFinBackend(SBaseConn):
         print("Figure out what's already in pfin.reporting_period..")
         tab_rp = self.base.by_module.pfin.reporting_period
         df_rp = self.fetch_table_df(tab_rp)
-        df_rp_map = df_rp[["id", "asset_id", "filing_date"]]
+        df_rp_map = df_rp[["id", "asset_id", "fiscal_year", "period"]]
         # print(df_rp_map)
 
         print("Figure out what's already in pfin.balance_sheet_statement..")
@@ -763,7 +798,10 @@ class PFinBackend(SBaseConn):
         # print(df_sbase)
 
         print("Generating a set of symbols to fetch from FMP...")
-        asset_map = self._fetch_asset_map()
+        asset_map = self._fetch_asset_map_financials()
+        if sym_list:
+            # [richmosko]: Only use subset of symbols
+            asset_map = {sym: asset_map[sym] for sym in sym_list}
         # id_list = list(asset_map.values())
         sym_list = list(asset_map.keys())
         # print(asset_map)
@@ -799,7 +837,7 @@ class PFinBackend(SBaseConn):
             .str.to_datetime(strict=False, time_zone="UTC")
             .alias("accepted_date")
         )
-        uq_cols = ["asset_id", "filing_date"]
+        uq_cols = ["asset_id", "fiscal_year", "period"]
         df_fmp = df_rp_map.join(df_fmp, on=uq_cols, how="inner")
         df_fmp = df_fmp.drop(uq_cols)
         df_fmp = df_fmp.rename({"id": "reporting_period_id"})
@@ -817,7 +855,7 @@ class PFinBackend(SBaseConn):
         print(df_insert)
 
         print("Determining entries to update...")
-        df_update = df_old
+        df_update = self._isolate_updated_rows_df(key_list, df_old, df_new)
         # [richmosko]: primary key already present in FK reporting_period_id
         print(df_update)
 
@@ -825,7 +863,7 @@ class PFinBackend(SBaseConn):
         self.update_table_df(tab_sbase, key_list, df_update)
         return
 
-    def update_table_cash_flow_statement(self):
+    def update_table_cash_flow_statement(self, sym_list=None):
         """
         Fetch cash-flow-statement data from the FMP API.
         Insert new entries into SupaBase, otherwise update existing entries with
@@ -840,7 +878,7 @@ class PFinBackend(SBaseConn):
         print("Figure out what's already in pfin.reporting_period..")
         tab_rp = self.base.by_module.pfin.reporting_period
         df_rp = self.fetch_table_df(tab_rp)
-        df_rp_map = df_rp[["id", "asset_id", "filing_date"]]
+        df_rp_map = df_rp[["id", "asset_id", "fiscal_year", "period"]]
         # print(df_rp_map)
 
         print("Figure out what's already in pfin.cash_flow_statement..")
@@ -849,7 +887,10 @@ class PFinBackend(SBaseConn):
         # print(df_sbase)
 
         print("Generating a set of symbols to fetch from FMP...")
-        asset_map = self._fetch_asset_map()
+        asset_map = self._fetch_asset_map_financials()
+        if sym_list:
+            # [richmosko]: Only use subset of symbols
+            asset_map = {sym: asset_map[sym] for sym in sym_list}
         # id_list = list(asset_map.values())
         sym_list = list(asset_map.keys())
         # print(asset_map)
@@ -885,7 +926,7 @@ class PFinBackend(SBaseConn):
             .str.to_datetime(strict=False, time_zone="UTC")
             .alias("accepted_date")
         )
-        uq_cols = ["asset_id", "filing_date"]
+        uq_cols = ["asset_id", "fiscal_year", "period"]
         df_fmp = df_rp_map.join(df_fmp, on=uq_cols, how="inner")
         df_fmp = df_fmp.drop(uq_cols)
         df_fmp = df_fmp.rename({"id": "reporting_period_id"})
@@ -903,7 +944,7 @@ class PFinBackend(SBaseConn):
         print(df_insert)
 
         print("Determining entries to update...")
-        df_update = df_old
+        df_update = self._isolate_updated_rows_df(key_list, df_old, df_new)
         # [richmosko]: primary key already present in FK reporting_period_id
         print(df_update)
 
@@ -911,7 +952,7 @@ class PFinBackend(SBaseConn):
         self.update_table_df(tab_sbase, key_list, df_update)
         return
 
-    def update_table_earning(self):
+    def update_table_earning(self, sym_list=None):
         """
         Fetch earnings data from the FMP API.
         Insert new entries into SupaBase, otherwise update existing entries with
@@ -935,19 +976,21 @@ class PFinBackend(SBaseConn):
         print("Figure out what's already in pfin.reporting_period...")
         tab_rp = self.base.by_module.pfin.reporting_period
         df_rp = self.fetch_table_df(tab_rp)
-        df_rp_map = df_rp[["id", "asset_id", "filing_date"]]
+        df_rp_map = df_rp[["id", "asset_id", "accepted_date"]]
         # print(df_rp_map)
 
-        print(
-            "Find the latest (current) report date for each asset_id in pfin.reporting_period..."
-        )
+        print("Find the current report date for each asset_id in pfin.reporting_period...")
         asset_id_list = df_rp_map["asset_id"].unique().to_list()
         latest_rpt = {}
         for asset_id in asset_id_list:
             df_tmp = df_rp_map.filter(pl.col("asset_id") == asset_id)
-            df_tmp = df_tmp.sort("filing_date", descending=True)
+            df_tmp = df_tmp.sort("accepted_date", descending=True)
             # [richmosko]: skip the 1st date which is reserved for future estimates...
-            latest_rpt[asset_id] = df_tmp.item(1, "filing_date")
+            if (len(df_tmp) > 1):
+                latest_rpt[asset_id] = df_tmp.item(1, "accepted_date")
+            else:
+                # Doesn't seem to have released financial statements...
+                latest_rpt[asset_id] = datetime.now(timezone.utc)
         # print(f"  Latest Reports: {latest_rpt}")
 
         print("Figure out what's already in pfin.earning...")
@@ -956,7 +999,10 @@ class PFinBackend(SBaseConn):
         # print(df_sbase)
 
         print("Generating a set of symbols to fetch from FMP...")
-        asset_map = self._fetch_asset_map()
+        asset_map = self._fetch_asset_map_financials()
+        if sym_list:
+            # [richmosko]: Only use subset of symbols
+            asset_map = {sym: asset_map[sym] for sym in sym_list}
         id_list = list(asset_map.values())
         sym_list = list(asset_map.keys())
         # print(asset_map)
@@ -969,14 +1015,8 @@ class PFinBackend(SBaseConn):
             limit=(PERIODS_TO_FETCH + 2),
         )
         df_fmp = utils.clean_empty_str_df(df_fmp)
-        df_fmp = df_fmp.filter(
-            ~(
-                pl.col("revenue_actual").is_null()
-                & pl.col("revenue_estimated").is_null()
-            )
-        )
         df_fmp = df_fmp.rename({"symbol": "asset_id"})
-        df_fmp = df_fmp.rename({"date": "filing_date"})
+        df_fmp = df_fmp.rename({"date": "accepted_date"})
         df_fmp = df_fmp.with_columns(
             pl.col("asset_id")
             .replace(asset_map)
@@ -984,25 +1024,30 @@ class PFinBackend(SBaseConn):
             .alias("asset_id")
         )
         df_fmp = df_fmp.with_columns(
-            pl.col("filing_date").str.to_date(strict=False).alias("filing_date")
+            pl.col("accepted_date").str.to_date(strict=False)
+            .alias("ref_date")
         )
-        df_fmp = df_fmp.with_columns(pl.col("filing_date").alias("ref_date"))
+        df_fmp = df_fmp.with_columns(
+            pl.col("accepted_date")
+            .str.to_datetime(strict=False, time_zone="UTC")
+            .alias("accepted_date")
+        )
         df_fmp = df_fmp.with_columns(pl.lit(None).alias("reporting_period_id"))
         # print(df_fmp)
 
         print("Match earnings reports to posted reporting_periods...")
         # sort and add a temporary row_idx as primary keys
-        df_rp_map = df_rp_map.sort("filing_date", descending=True).with_row_index(
+        df_rp_map = df_rp_map.sort("accepted_date", descending=True).with_row_index(
             name="row_idx"
         )
-        df_fmp = df_fmp.sort("filing_date", descending=True).with_row_index(
+        df_fmp = df_fmp.sort("accepted_date", descending=True).with_row_index(
             name="row_idx"
         )
 
         fmp_drop_list = []
         for asset_id in id_list:
             cond_fmp_asset_id = pl.col("asset_id") == asset_id
-            cond_fmp_filing_date = pl.col("filing_date") <= latest_rpt[
+            cond_fmp_filing_date = pl.col("accepted_date") <= latest_rpt[
                 asset_id
             ] + timedelta(weeks=2)
             # filter for the conditions above, and get the row_idx values as lists
@@ -1041,18 +1086,21 @@ class PFinBackend(SBaseConn):
         df_fmp = df_fmp.with_columns(
             pl.when(pl.col("reporting_period_id").is_null())
             .then(pl.lit(tmp_date_fut))
-            .otherwise(pl.col("filing_date"))
-            .alias("filing_date")
+            .otherwise(pl.col("accepted_date"))
+            .alias("accepted_date")
         )
-        uq_cols = ["asset_id", "filing_date"]
+        uq_cols = ["asset_id", "accepted_date"]
         df_rp_map = (
-            df_rp_map.filter(pl.col("filing_date") == tmp_date_fut)
+            df_rp_map.filter(pl.col("accepted_date") == tmp_date_fut)
             .rename({"id": "reporting_period_id"})
             .drop("row_idx")
         )
-        df_fmp = df_fmp.update(df_rp_map, on=uq_cols).drop(
-            ["asset_id", "filing_date", "row_idx"]
+        df_fmp = df_fmp.update(df_rp_map, on=uq_cols)
+        df_fmp = df_fmp.unique(subset=["reporting_period_id"], keep="last")
+        df_fmp = df_fmp.drop(
+            ["asset_id", "accepted_date", "row_idx"]
         )
+        # print(df_fmp.filter(pl.col('asset_id') == 111))
         print(
             f"  Null reporting_period_id(s) found: {
                 len(df_fmp.filter(pl.col('reporting_period_id').is_null()))
@@ -1072,7 +1120,7 @@ class PFinBackend(SBaseConn):
         print(df_insert)
 
         print("Determining entries to update...")
-        df_update = df_old
+        df_update = self._isolate_updated_rows_df(key_list, df_old, df_new)
         # [richmosko]: primary key already present in FK reporting_period_id
         print(df_update)
 
@@ -1080,7 +1128,7 @@ class PFinBackend(SBaseConn):
         self.update_table_df(tab_sbase, key_list, df_update)
         return
 
-    def update_table_eod_price(self):
+    def update_table_eod_price(self, sym_list=None):
         """
         Fetch end of day price data from the FMP API.
         Insert new entries into SupaBase, otherwise update existing entries with
@@ -1099,7 +1147,10 @@ class PFinBackend(SBaseConn):
         # print(df_sbase)
 
         print("Generating a set of symbols to fetch from FMP...")
-        asset_map = self._fetch_asset_map()
+        asset_map = self._fetch_asset_map_chart()
+        if sym_list:
+            # [richmosko]: Only use subset of symbols
+            asset_map = {sym: asset_map[sym] for sym in sym_list}
         # id_list = list(asset_map.values())
         sym_list = list(asset_map.keys())
         # print(asset_map)
@@ -1139,21 +1190,19 @@ class PFinBackend(SBaseConn):
         print(df_insert)
 
         print("Determining entries to update...")
-        df_update = df_old
-        # [richmosko]: ensure primary key present
-        df_update = df_update.with_columns(df_sbase["id"].alias("id"))
+        df_update = self._isolate_updated_rows_df(key_list, df_old, df_new)
+        # [richmosko]: add back primary key for update
+        df_prikey = df_sbase.select(key_list + ["id"])
+        df_update = df_update.join(df_prikey, on=key_list, how="left")
         print(df_update)
 
         self.insert_table_df(tab_sbase, df_insert)
         self.update_table_df(tab_sbase, "id", df_update)
         return
 
-    def _fetch_asset_map(self):
+    def _fetch_asset_map_financials(self):
         """
-        Generate list of symbols to work on by querying the asset table and
-        filtering by asset_cat as Equity and matching appropriate boolean flags.
-        args:
-            session:       the current active sqlalchemy session
+        Generate an asset => asset_id map (for items with financial statements)
 
         returns:
             asset_map:     dictionary of symbol(s) and mapped asset_id(s)
@@ -1166,9 +1215,35 @@ class PFinBackend(SBaseConn):
             .where(tab_asset_cat.cat == "Equity")
             .where(tab_asset.has_financials)
         )
+        return self._fetch_asset_map(stmt)
+
+    def _fetch_asset_map_chart(self):
+        """
+        Generate an asset => asset_id map (for items with price charts)
+
+        returns:
+            asset_map:     dictionary of symbol(s) and mapped asset_id(s)
+        """
+        tab_asset = self.base.by_module.pfin.asset
+        tab_asset_cat = self.base.by_module.pfin.asset_cat
+        stmt = (
+            sqla.select(tab_asset.symbol, tab_asset.id)
+            .join(tab_asset_cat)
+            .where(tab_asset_cat.cat == "Equity")
+            .where(tab_asset.has_chart)
+        )
+        return self._fetch_asset_map(stmt)
+
+    def _fetch_asset_map(self, stmt):
+        """
+        Generate list of symbols to work on based on the provuded select statememt
+        args:
+            stmt:          sqlalchemy select statement to query DB table
+
+        returns:
+            asset_map:     dictionary of symbol(s) and mapped asset_id(s)
+        """
         ldict = self._fetch_sbase_ldict(stmt)
-        # id_list = [d["id"] for d in ldict]
-        # sym_list = [d["symbol"] for d in ldict]
         asset_map = {}
         for item in ldict:
             sym = item["symbol"]
