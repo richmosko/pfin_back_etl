@@ -216,11 +216,14 @@ class SBaseConn:
         DB_USER = self._params["DB_USER"]
         DB_PASSWORD = self._params["DB_PASSWORD"]
         DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@"
-        DATABASE_URL += f"{DB_HOST}:{DB_PORT}/{DB_NAME}?sslmode=require"
+        DATABASE_URL += f"{DB_HOST}:{DB_PORT}/{DB_NAME}"
+        #DATABASE_URL += "?sslmode=require"
 
         # 1. Construct the SQLAlchemy connection string and setup the engine
         print("Setting up sqlalchemy engine...")
-        engine = sqla.create_engine(DATABASE_URL, poolclass=sqla.pool.NullPool)
+        ssl_args = {"sslcert": "./localhost.pem", "sslkey": "./localhost-key.pem"}
+        engine = sqla.create_engine(DATABASE_URL,
+                                    poolclass=sqla.pool.NullPool)
         # engine = sqla.create_engine(DATABASE_URL, poolclass=sqla.pool.NullPool, echo=True)
 
         # 2. Create the Automap Base, linking to your engine's metadata

@@ -36,12 +36,12 @@ def test_table_reflection():
         "eod_price",
         "equity_profile",
         "income_statement",
-        "member",
         "nav",
         "reporting_period",
         "schema_version",
         "tax_cat",
         "trans_cat",
+        "user_profile",
         "watchlist",
     ]
     print(f"Table Check List: {pfin_tab_check_list}")
