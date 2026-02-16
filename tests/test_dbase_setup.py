@@ -24,7 +24,7 @@ def test_table_reflection():
     print(insp.get_table_names(schema="pfin"))
     pfin_tab_check_list = [
         "account",
-        "account_access",
+        "account_users",
         "account_trans",
         "account_type",
         "asset",
