@@ -21,3 +21,15 @@ test = [
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "unit: fast tests with no external dependencies (no DB, no API)",
+    "integration: tests that require database and/or API connections",
+]
+addopts = [
+    "--strict-markers",
+    "--tb=short",
+    "-v",
+]
