@@ -11,7 +11,7 @@ COPY src/ src/
 COPY main.py .
 
 # Install dependencies and the project itself
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev && uv pip install -e .
 
 # Run the ETL
 CMD ["uv", "run", "python", "main.py"]
