@@ -8,7 +8,6 @@ Description:
 """
 
 import pytest
-import pfin_back_etl as pfbe
 import sqlalchemy as sqla
 
 

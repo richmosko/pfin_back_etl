@@ -10,7 +10,7 @@ Description:
 
 import pytest
 import polars as pl
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock
 from pfin_back_etl.core import SBaseConn, PFinFMP
 
 
@@ -109,21 +109,28 @@ class TestCalcCommonCols:
         mock_table = MagicMock()
         mock_table.__table__ = MagicMock()
         mock_table.__table__.columns.keys.return_value = [
-            "id", "symbol", "description", "created_at"
+            "id",
+            "symbol",
+            "description",
+            "created_at",
         ]
 
-        df_sbase = pl.DataFrame({
-            "id": [1, 2],
-            "symbol": ["AAPL", "NVDA"],
-            "description": ["Apple", "NVIDIA"],
-            "created_at": ["2024-01-01", "2024-01-02"],
-        })
+        df_sbase = pl.DataFrame(
+            {
+                "id": [1, 2],
+                "symbol": ["AAPL", "NVDA"],
+                "description": ["Apple", "NVIDIA"],
+                "created_at": ["2024-01-01", "2024-01-02"],
+            }
+        )
 
-        df_api = pl.DataFrame({
-            "symbol": ["AAPL", "NVDA", "META"],
-            "description": ["Apple Inc.", "NVIDIA Corp.", "Meta"],
-            "extra_field": [100, 200, 300],  # not in DB
-        })
+        df_api = pl.DataFrame(
+            {
+                "symbol": ["AAPL", "NVDA", "META"],
+                "description": ["Apple Inc.", "NVIDIA Corp.", "Meta"],
+                "extra_field": [100, 200, 300],  # not in DB
+            }
+        )
 
         common_cols, df_old, df_new = conn._calc_common_cols_df(
             mock_table, df_sbase, df_api

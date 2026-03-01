@@ -217,13 +217,12 @@ class SBaseConn:
         DB_PASSWORD = self._params["DB_PASSWORD"]
         DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@"
         DATABASE_URL += f"{DB_HOST}:{DB_PORT}/{DB_NAME}"
-        #DATABASE_URL += "?sslmode=require"
+        # DATABASE_URL += "?sslmode=require"
 
         # 1. Construct the SQLAlchemy connection string and setup the engine
         print("Setting up sqlalchemy engine...")
-        ssl_args = {"sslcert": "./localhost.pem", "sslkey": "./localhost-key.pem"}
-        engine = sqla.create_engine(DATABASE_URL,
-                                    poolclass=sqla.pool.NullPool)
+        ssl_args = {"sslcert": "./localhost.pem", "sslkey": "./localhost-key.pem"}  # noqa: F841
+        engine = sqla.create_engine(DATABASE_URL, poolclass=sqla.pool.NullPool)
         # engine = sqla.create_engine(DATABASE_URL, poolclass=sqla.pool.NullPool, echo=True)
 
         # 2. Create the Automap Base, linking to your engine's metadata
@@ -434,11 +433,13 @@ class PFinBackend(SBaseConn):
 
         print("Fetch current CPI data from the BLS...")
         current_year = date.today().year
-        starting_year = current_year - num_years + 1 # includes current year
+        starting_year = current_year - num_years + 1  # includes current year
         print(f"  Fetching years {starting_year} to {current_year}:")
 
         # [richmosko]: FIXME... Get Series Name(s) from .env
-        df_api = utils.fetch_cpi_df(api_key, starting_year, current_year, ["CUUR0000SA0"])
+        df_api = utils.fetch_cpi_df(
+            api_key, starting_year, current_year, ["CUUR0000SA0"]
+        )
         # df_api = fetch_cpi(api_key, '2022', '2026', ['CUUR0000SA0','SUUR0000SA0'])
         df_api = df_api.with_columns(pl.lit("cpi-u").alias("series_name"))
         df_api = utils.clean_empty_str_df(df_api)
@@ -504,10 +505,9 @@ class PFinBackend(SBaseConn):
         if not sym_list:
             print("Generating a symbol list to process...")
             df_slist = self.fmp_client.get_screened_stocks(
-                self._stock_screener_min_mkt_cap,
-                self._stock_screener_result_limit
+                self._stock_screener_min_mkt_cap, self._stock_screener_result_limit
             )
-            sym_list = df_slist['symbol'].to_list()
+            sym_list = df_slist["symbol"].to_list()
 
         print("Fetching data from Financial Modeling Prep...")
         df_fmp = self.fmp_client.fetch_fmp_list_df(
@@ -982,14 +982,16 @@ class PFinBackend(SBaseConn):
         df_rp_map = df_rp[["id", "asset_id", "accepted_date"]]
         # print(df_rp_map)
 
-        print("Find the current report date for each asset_id in pfin.reporting_period...")
+        print(
+            "Find the current report date for each asset_id in pfin.reporting_period..."
+        )
         asset_id_list = df_rp_map["asset_id"].unique().to_list()
         latest_rpt = {}
         for asset_id in asset_id_list:
             df_tmp = df_rp_map.filter(pl.col("asset_id") == asset_id)
             df_tmp = df_tmp.sort("accepted_date", descending=True)
             # [richmosko]: skip the 1st date which is reserved for future estimates...
-            if (len(df_tmp) > 1):
+            if len(df_tmp) > 1:
                 latest_rpt[asset_id] = df_tmp.item(1, "accepted_date")
             else:
                 # Doesn't seem to have released financial statements...
@@ -1027,8 +1029,7 @@ class PFinBackend(SBaseConn):
             .alias("asset_id")
         )
         df_fmp = df_fmp.with_columns(
-            pl.col("accepted_date").str.to_date(strict=False)
-            .alias("ref_date")
+            pl.col("accepted_date").str.to_date(strict=False).alias("ref_date")
         )
         df_fmp = df_fmp.with_columns(
             pl.col("accepted_date")
@@ -1100,9 +1101,7 @@ class PFinBackend(SBaseConn):
         )
         df_fmp = df_fmp.update(df_rp_map, on=uq_cols)
         df_fmp = df_fmp.unique(subset=["reporting_period_id"], keep="last")
-        df_fmp = df_fmp.drop(
-            ["asset_id", "accepted_date", "row_idx"]
-        )
+        df_fmp = df_fmp.drop(["asset_id", "accepted_date", "row_idx"])
         # print(df_fmp.filter(pl.col('asset_id') == 111))
         print(
             f"  Null reporting_period_id(s) found: {

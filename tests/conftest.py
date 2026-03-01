@@ -31,6 +31,7 @@ def backend():
     """
     try:
         import pfin_back_etl as pfbe
+
         pfb = pfbe.PFinBackend()
         return pfb
     except Exception as e:
@@ -158,8 +159,8 @@ def sample_df_new():
             "description": [
                 "Apple Inc.",
                 "NVIDIA Corporation",  # updated description
-                "Meta Platforms",      # new entry
-                "Microsoft Corp.",     # new entry
+                "Meta Platforms",  # new entry
+                "Microsoft Corp.",  # new entry
             ],
         }
     )
