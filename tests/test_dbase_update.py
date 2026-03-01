@@ -3,11 +3,11 @@ Project:       pfin-back-etl
 Author:        Rich Mosko
 
 Description:
-    Test function to initialize the backend and database
-
+    Integration tests for ETL update operations.
+    Requires valid .env credentials to connect to SupaBase and external APIs.
 """
 
-# library imports
+import pytest
 import pfin_back_etl as pfbe
 
 SYMBOL_LIST = [
@@ -29,57 +29,59 @@ SYMBOL_LIST = [
     "PANW",
 ]
 
-def test_update_table_cpi():
-    pfb = pfbe.PFinBackend()
-    pfb.update_table_cpi()
-    pfb.update_table_cpi(num_years=2)
+
+@pytest.mark.integration
+def test_update_table_cpi(backend):
+    backend.update_table_cpi()
+    backend.update_table_cpi(num_years=2)
 
 
-def test_update_table_asset():
-    pfb = pfbe.PFinBackend()
-    pfb.update_table_asset(sym_list=SYMBOL_LIST)
+@pytest.mark.integration
+def test_update_table_asset(backend):
+    backend.update_table_asset(sym_list=SYMBOL_LIST)
 
 
-def test_update_table_equity_profile():
-    pfb = pfbe.PFinBackend()
-    pfb.update_table_equity_profile(sym_list=SYMBOL_LIST)
+@pytest.mark.integration
+def test_update_table_equity_profile(backend):
+    backend.update_table_equity_profile(sym_list=SYMBOL_LIST)
 
 
-def test_update_table_reporting_period():
-    pfb = pfbe.PFinBackend()
-    pfb.update_table_reporting_period(sym_list=SYMBOL_LIST)
+@pytest.mark.integration
+def test_update_table_reporting_period(backend):
+    backend.update_table_reporting_period(sym_list=SYMBOL_LIST)
 
 
-def test_update_table_income_statement():
-    pfb = pfbe.PFinBackend()
-    pfb.update_table_income_statement(sym_list=SYMBOL_LIST)
+@pytest.mark.integration
+def test_update_table_income_statement(backend):
+    backend.update_table_income_statement(sym_list=SYMBOL_LIST)
 
 
-def test_update_table_balance_sheet_statement():
-    pfb = pfbe.PFinBackend()
-    pfb.update_table_balance_sheet_statement(sym_list=SYMBOL_LIST)
+@pytest.mark.integration
+def test_update_table_balance_sheet_statement(backend):
+    backend.update_table_balance_sheet_statement(sym_list=SYMBOL_LIST)
 
 
-def test_update_table_cash_flow_statement():
-    pfb = pfbe.PFinBackend()
-    pfb.update_table_cash_flow_statement(sym_list=SYMBOL_LIST)
+@pytest.mark.integration
+def test_update_table_cash_flow_statement(backend):
+    backend.update_table_cash_flow_statement(sym_list=SYMBOL_LIST)
 
 
-def test_update_table_earning():
-    pfb = pfbe.PFinBackend()
-    pfb.update_table_earning(sym_list=SYMBOL_LIST)
+@pytest.mark.integration
+def test_update_table_earning(backend):
+    backend.update_table_earning(sym_list=SYMBOL_LIST)
 
 
-def test_update_table_eod_price():
-    pfb = pfbe.PFinBackend()
-    pfb.update_table_eod_price(sym_list=SYMBOL_LIST)
+@pytest.mark.integration
+def test_update_table_eod_price(backend):
+    backend.update_table_eod_price(sym_list=SYMBOL_LIST)
 
 
-def test_update_table_all():
-    pfb = pfbe.PFinBackend()
-    pfb.update_table_all(sym_list=SYMBOL_LIST)
+@pytest.mark.integration
+def test_update_table_all(backend):
+    backend.update_table_all(sym_list=SYMBOL_LIST)
 
 
+@pytest.mark.integration
 def test_update_table_all_search():
     print("Perform Full Symbol Search. Update All records...")
     pfb = pfbe.PFinBackend()
