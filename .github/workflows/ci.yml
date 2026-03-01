@@ -59,37 +59,7 @@ jobs:
         run: uv run pytest -m unit --cov=pfin_back_etl --cov-report=term-missing
 
   # ---------------------------------------------------------------
-  # Integration Tests: requires DB + API credentials (main only)
+  # Integration Tests: run locally with `uv run pytest -m integration`
+  # Requires .env with valid DB + API credentials.
+  # Not run in CI to avoid writing to the production database.
   # ---------------------------------------------------------------
-  integration-tests:
-    name: Integration Tests
-    needs: [lint, unit-tests]
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-
-      - name: Install dependencies
-        run: |
-          uv sync --group test
-          uv pip install -e .
-
-      - name: Run integration tests
-        env:
-          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
-          BLS_API_KEY: ${{ secrets.BLS_API_KEY }}
-          PFIN_DB_USER: ${{ secrets.PFIN_DB_USER }}
-          PFIN_DB_HOST: ${{ secrets.PFIN_DB_HOST }}
-          PFIN_DB_PORT: ${{ secrets.PFIN_DB_PORT }}
-          PFIN_DB_NAME: ${{ secrets.PFIN_DB_NAME }}
-          PFIN_DB_PASSWORD: ${{ secrets.PFIN_DB_PASSWORD }}
-        run: uv run pytest -m integration -v
