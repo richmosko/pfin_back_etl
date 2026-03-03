@@ -217,11 +217,10 @@ class SBaseConn:
         DB_PASSWORD = self._params["DB_PASSWORD"]
         DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@"
         DATABASE_URL += f"{DB_HOST}:{DB_PORT}/{DB_NAME}"
-        # DATABASE_URL += "?sslmode=require"  # TODO: enable once SSL is configured in Coolify
+        DATABASE_URL += "?sslmode=require"
 
         # 1. Construct the SQLAlchemy connection string and setup the engine
         print("Setting up sqlalchemy engine...")
-        ssl_args = {"sslcert": "./localhost.pem", "sslkey": "./localhost-key.pem"}  # noqa: F841
         engine = sqla.create_engine(DATABASE_URL, poolclass=sqla.pool.NullPool)
         # engine = sqla.create_engine(DATABASE_URL, poolclass=sqla.pool.NullPool, echo=True)
 
