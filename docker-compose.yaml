@@ -1,6 +1,6 @@
 services:
   pfin-back-etl:
     build: .
-    restart: "no"
+    restart: unless-stopped
     environment:
       - PYTHONUNBUFFERED=1
