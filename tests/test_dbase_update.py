@@ -81,7 +81,7 @@ def test_update_table_all(backend):
     backend.update_table_all(sym_list=SYMBOL_LIST)
 
 
-@pytest.mark.integration
+@pytest.mark.deployment
 def test_update_table_all_search():
     print("Perform Full Symbol Search. Update All records...")
     pfb = pfbe.PFinBackend()
