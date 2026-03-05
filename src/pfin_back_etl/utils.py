@@ -8,12 +8,15 @@ Description:
 """
 
 # library imports
+import logging
 import os
 import dotenv
 import re
 import requests
 import json
 import polars as pl
+
+logger = logging.getLogger("pfin_etl")
 
 
 def col_to_snake(col_list):
@@ -72,7 +75,7 @@ def load_env_variables(env_prefix):
     key_value = os.getenv(key_name)
     params["FMP_API_KEY"] = key_value
     if key_value is not None:
-        print(f"{key_name} value found...")
+        logger.info(f"{key_name} value found...")
     else:
         raise ValueError(
             f"Environment variable {key_name} does not exist in .env file."
@@ -83,7 +86,7 @@ def load_env_variables(env_prefix):
     key_value = os.getenv(key_name)
     params["BLS_API_KEY"] = key_value
     if key_value is not None:
-        print(f"{key_name} value found...")
+        logger.info(f"{key_name} value found...")
     else:
         raise ValueError(
             f"Environment variable {key_name} does not exist in .env file."
@@ -152,7 +155,7 @@ def fetch_cpi_df(api_key, startyear, endyear, series_id_lst):
     )
     json_data = json.loads(p.text)
 
-    print(f"  JSON STATUS: {json_data['status']}")
+    logger.info(f"JSON STATUS: {json_data['status']}")
     if json_data["status"] != "REQUEST_SUCCEEDED":
         raise Exception("BLS CPI fetch request unsuccessful")
 

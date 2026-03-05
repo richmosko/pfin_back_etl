@@ -34,3 +34,6 @@ addopts = [
     "--tb=short",
     "-v",
 ]
+log_cli = true
+log_cli_level = "INFO"
+

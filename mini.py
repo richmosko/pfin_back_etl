@@ -46,7 +46,7 @@ def main():
     logger.info(f"Starting ETL run at {t_start.isoformat()}")
 
     pfb = PFinBackend()
-    pfb.update_table_all()
+    pfb.update_table_all(sym_list=["NVDA","AAP","IREN","V","GOOGL","META"])
 
     t_end = datetime.now(timezone.utc)
     elapsed = t_end - t_start

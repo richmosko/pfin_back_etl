@@ -83,6 +83,6 @@ def test_update_table_all(backend):
 
 @pytest.mark.deployment
 def test_update_table_all_search():
-    print("Perform Full Symbol Search. Update All records...")
+    logger.info("Perform Full Symbol Search. Update All records...")
     pfb = pfbe.PFinBackend()
     pfb.update_table_all()
