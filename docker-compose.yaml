@@ -1,5 +1,6 @@
 services:
   pfin-back-etl:
+    container_name: pfin-back-etl
     build: .
     restart: unless-stopped
     environment:
