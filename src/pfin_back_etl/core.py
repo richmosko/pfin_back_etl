@@ -132,7 +132,9 @@ class SBaseConn:
         with sqla.orm.Session(self.engine) as session:
             s_name = tab_sbase.__table__.schema
             t_name = tab_sbase.__table__.name
-            logger.info(f"Inserting {len(df_insert)} new entries in {s_name}.{t_name}...")
+            logger.info(
+                f"Inserting {len(df_insert)} new entries in {s_name}.{t_name}..."
+            )
             ldict_insert = df_insert.to_dicts()
             if ldict_insert:
                 stmt = sqla.insert(tab_sbase)
@@ -150,7 +152,9 @@ class SBaseConn:
         with sqla.orm.Session(self.engine) as session:
             s_name = tab_sbase.__table__.schema
             t_name = tab_sbase.__table__.name
-            logger.info(f"Updating {len(df_update)} existing entries in {s_name}.{t_name}...")
+            logger.info(
+                f"Updating {len(df_update)} existing entries in {s_name}.{t_name}..."
+            )
             ldict_update = df_update.to_dicts()
             if ldict_update:
                 self._staging_update(session, tab_sbase, key_list, ldict_update)
@@ -650,7 +654,9 @@ class PFinBackend(SBaseConn):
             .alias("accepted_date")
         )
 
-        logger.info("Create generic 'future' reporting periods for EPS & Rev estimates...")
+        logger.info(
+            "Create generic 'future' reporting periods for EPS & Rev estimates..."
+        )
         # tmp_date_now = datetime.now(timezone.utc)
         tmp_date_fut = datetime.fromisoformat(self._tmp_date_fut).replace(
             tzinfo=timezone.utc
@@ -811,7 +817,9 @@ class PFinBackend(SBaseConn):
         sym_list = list(asset_map.keys())
         # print(asset_map)
 
-        logger.info("Fetching balance_sheet_statement data from Financial Modeling Prep...")
+        logger.info(
+            "Fetching balance_sheet_statement data from Financial Modeling Prep..."
+        )
         df_fmp = self.fmp_client.fetch_fmp_list_df(
             self.fmp_client.balance_sheet_statement,
             "symbol",
@@ -1082,7 +1090,9 @@ class PFinBackend(SBaseConn):
         )
         df_fmp = df_fmp.filter(~pl.col("row_idx").is_in(fmp_drop_list))
 
-        logger.info("Set remaining unmatched earnings reports to future reporting_periods...")
+        logger.info(
+            "Set remaining unmatched earnings reports to future reporting_periods..."
+        )
         # tmp_date_now = datetime.now(timezone.utc)
         tmp_date_fut = (
             datetime.fromisoformat(self._tmp_date_fut)

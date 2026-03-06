@@ -7,6 +7,7 @@ Description:
     Requires valid .env credentials to connect to SupaBase and external APIs.
 """
 
+import logging
 import pytest
 import pfin_back_etl as pfbe
 
@@ -28,6 +29,8 @@ SYMBOL_LIST = [
     "ADSK",
     "PANW",
 ]
+
+logger = logging.getLogger("test_dbase")
 
 
 @pytest.mark.integration
