@@ -9,6 +9,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 COPY src/ src/
 COPY main.py .
+COPY mini.py .
 
 # Install dependencies and the project itself
 RUN uv sync --frozen --no-dev && uv pip install -e .
