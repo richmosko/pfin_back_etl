@@ -28,8 +28,8 @@ def setup_logging():
     console.setFormatter(formatter)
     logger.addHandler(console)
 
-    # File handler (append mode)
-    file_handler = logging.FileHandler(LOG_FILE, mode="a")
+    # File handler (overwrite each run)
+    file_handler = logging.FileHandler(LOG_FILE, mode="w")
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 
