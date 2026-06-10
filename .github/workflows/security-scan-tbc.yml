@@ -1,0 +1,71 @@
+# .github/workflows/security-scan-tbc.yml
+#
+# Paired PR — Phase 5 Step 4 W1 (DevOps lead at mosko-fintech).
+# Production-mode + inversion-mode TBC fence enforcement for pfin_back_etl.
+#
+# Cross-repo posture: this workflow + the vendored scripts/ci/fence-tbc-pfin-back-etl.sh
+# + tests/fixtures/ci/tbc-violation.py are the pfin_back_etl-side half of
+# Phase 5 Step 4 W1. The mosko-fintech-side half (which landed at richmosko/mosko-fintech
+# PR #104, merge commit d899ddb) holds the source-of-truth fence script + golden
+# fixture + cross-repo coordination docs at scripts/ci/README.md § Cross-repo
+# TBC posture.
+#
+# Lock anchors (all in richmosko/mosko-fintech repo at the SHA above):
+#   - ADR-011 Decision 17 / Lock 13 mod #3 (V1-SHIP-BLOCK verbatim)
+#   - ADR-011 Decision 4 Privileged-context-surfaces bullet
+#     (NOT catalogued §10 numbered list — discipline-preservation guard)
+#   - ARCH §6 Security scan stage (ii) + ARCH §6.1 TBC row
+#
+# §10 attribution discipline (per mosko-fintech Sec rubric (c)1 verbatim):
+#   TBC is the Privileged-context-surfaces bullet at Decision 4 (code-layer
+#   parallel to RT-26 on the V1-web-app side; NOT in Decision 4's catalogued
+#   numbered list which names RT-22 first and RT-26 second). V1-SHIP-BLOCK axis
+#   per Lock 13 mod #3 is orthogonal to the §10 catalogued-instance axis. This
+#   workflow file is the ENFORCEMENT VENUE for the TBC mechanism in pfin_back_etl;
+#   it is NOT a §10 attribution surface.
+#
+# Coexistence with the existing pfin_back_etl ci.yml:
+#   This workflow is independent of `.github/workflows/ci.yml` (lint + unit tests).
+#   No edits to ci.yml are needed; both workflows run in parallel on PR/push and
+#   independently gate via GitHub branch protection at Phase 5 Step 8 (the latter
+#   is mosko-fintech-side scope).
+
+name: Security scan — TBC fence
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# No `paths:` filter — TBC fence runs on every PR/push per the fail-closed-stronger
+# posture committed at mosko-fintech-side W1. A refactor that moves the
+# TenantBoundConnection class file or adds a sibling shouldn't accidentally skip
+# the fence.
+
+jobs:
+  fence-tbc:
+    name: TBC — TenantBoundConnection grep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: TBC production-mode (pfin_back_etl src/ tree)
+        # Scopes to src/ where the pfin_back_etl Python package lives (per
+        # pyproject.toml `[project]` src-layout convention). Excludes tests/
+        # by-construction (the test fixture lives there; production-mode would
+        # otherwise re-discover it as a violation — but we already exercise the
+        # fixture under inversion-mode below).
+        run: bash scripts/ci/fence-tbc-pfin-back-etl.sh src/
+
+      - name: TBC inversion-mode (vendored golden fixture; expects violation)
+        run: |
+          set +e
+          bash scripts/ci/fence-tbc-pfin-back-etl.sh tests/fixtures/ci/
+          rc=$?
+          set -e
+          if [ $rc -eq 0 ]; then
+            echo "FATAL: TBC fence reported clean against violation fixture — fence is broken; failing closed."
+            exit 1
+          fi
+          echo "OK: TBC fence caught fixture violation (exit $rc)."
