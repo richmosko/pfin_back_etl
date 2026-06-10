@@ -37,3 +37,12 @@ addopts = [
 log_cli = true
 log_cli_level = "INFO"
 
+[tool.ruff]
+# Exclude CI fence golden-test fixtures from lint + format. The fixtures are
+# vendored from mosko-fintech (single source of truth at richmosko/mosko-fintech
+# scripts/ci/README.md § Cross-repo TBC posture) and are deliberately violation-
+# shaped — applying ruff lint/format would drift the vendored copy from upstream
+# AND would defeat the fixture's design purpose (it MUST trip the CI fence).
+extend-exclude = [
+    "tests/fixtures/",
+]
